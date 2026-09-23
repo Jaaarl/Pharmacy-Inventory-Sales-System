@@ -3,8 +3,13 @@ package com.medtryx.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.lifecycle.lifecycleScope
 import androidx.room.Room
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +26,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -46,6 +52,8 @@ class MainActivity : ComponentActivity() {
     private var authMessage by mutableStateOf<String?>(null)
     private lateinit var authenticationService: AuthenticationService
     private lateinit var catalogService: CatalogService
+    private lateinit var catalogImporter: CsvCatalogImporter
+    private var catalogImportPreview by mutableStateOf<CatalogImportPreview?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +73,7 @@ class MainActivity : ComponentActivity() {
         }
         authenticationService = AuthenticationService(authDatabase, PasswordHasher(), deviceId)
         catalogService = CatalogService(authDatabase, ProtectedActionAuthorizer(authenticationService), authenticationService)
+        catalogImporter = CsvCatalogImporter(authDatabase, catalogService, ProtectedActionAuthorizer(authenticationService))
 
         lifecycleScope.launch {
             launchCount = withContext(Dispatchers.IO) {
@@ -92,6 +101,9 @@ class MainActivity : ComponentActivity() {
                         onLogout = ::logout,
                         onLock = ::lock,
                         onCreateProduct = ::createProduct,
+                        importPreview = catalogImportPreview,
+                        onPreviewImport = ::previewCatalogImport,
+                        onCommitImport = ::commitCatalogImport,
                     )
                 }
             }
@@ -107,12 +119,14 @@ class MainActivity : ComponentActivity() {
 
     private fun login(username: String, pin: String) = lifecycleScope.launch {
         authMessage = null
-        when (val result = withContext(Dispatchers.IO) { authenticationService.login(username, pin.toCharArray()) }) {
-            is LoginResult.Success -> authState = AuthState.SignedIn(result.session)
-            LoginResult.InvalidCredentials -> authMessage = "Invalid username or PIN."
-            LoginResult.Throttled -> authMessage = "Too many attempts. Please wait and try again."
-            LoginResult.DisabledAccount -> authMessage = "This account is disabled."
-        }
+        runCatching { withContext(Dispatchers.IO) { authenticationService.login(username, pin.toCharArray()) } }
+            .onSuccess { result -> when (result) {
+                is LoginResult.Success -> authState = AuthState.SignedIn(result.session)
+                LoginResult.InvalidCredentials -> authMessage = "Invalid username or PIN."
+                LoginResult.Throttled -> authMessage = "Too many attempts. Please wait and try again."
+                LoginResult.DisabledAccount -> authMessage = "This account is disabled."
+            } }
+            .onFailure { authMessage = it.message ?: "Unable to sign in." }
     }
 
     private fun logout() = lifecycleScope.launch {
@@ -130,15 +144,27 @@ class MainActivity : ComponentActivity() {
         authMessage=null
         runCatching { withContext(Dispatchers.IO) { catalogService.createProduct(session.sessionId, ProductDraft(sku,name,unit="piece",sellingPrice=BigDecimal(price),taxClass=TaxClass.VATABLE,taxSource="Pending approved catalog source",taxValidFrom=LocalDate.now(),benefitEligibility=BenefitEligibility.NONE,prescriptionClass=PrescriptionClass.OTHER,reorderLevel=BigDecimal.ZERO,requiresLotExpiry=false),reason) } }.onSuccess { authMessage="Product saved." }.onFailure { authMessage=it.message?:"Unable to save product." }
     }
+    private fun previewCatalogImport(session: AuthenticatedSession, csv: String) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { catalogImporter.validateAgainstCatalog(catalogImporter.preview(csv)) } }
+            .onSuccess { catalogImportPreview = it; authMessage = "Import preview ready: ${it.validRows.size} valid, ${it.rejectedRows.size} invalid." }
+            .onFailure { authMessage = it.message ?: "Unable to read the catalog CSV." }
+    }
+    private fun commitCatalogImport(session: AuthenticatedSession, preview: CatalogImportPreview, reason: String, validRowsOnly: Boolean) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { catalogImporter.commit(session.sessionId, preview, reason, if (validRowsOnly) preview.validRows.map { it.rowNumber }.toSet() else null) } }
+            .onSuccess { catalogImportPreview = null; authMessage = "Imported ${it.size} product(s)." }
+            .onFailure { authMessage = it.message ?: "Catalog import was not committed." }
+    }
 }
 
 @Composable
-private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit) {
+private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit, importPreview: CatalogImportPreview?, onPreviewImport: (AuthenticatedSession, String) -> Unit, onCommitImport: (AuthenticatedSession, CatalogImportPreview, String, Boolean) -> Unit) {
     when (authState) {
         AuthState.Loading -> LoadingScreen()
         AuthState.OwnerSetup -> OwnerSetupScreen(message, onCreateOwner)
         AuthState.SignIn -> LoginScreen(message, onLogin)
-        is AuthState.SignedIn -> SignedInScreen(authState.session, message, onLogout, onLock, onCreateProduct)
+        is AuthState.SignedIn -> SignedInScreen(authState.session, message, onLogout, onLock, onCreateProduct, importPreview, onPreviewImport, onCommitImport)
     }
 }
 
@@ -171,7 +197,7 @@ private fun LoadingScreen() {
 @Composable
 private fun AuthForm(title: String, message: String?, fields: List<Pair<String, String>>, submit: (List<String>) -> Unit, update: (Int, String) -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -187,9 +213,9 @@ private fun AuthForm(title: String, message: String?, fields: List<Pair<String, 
 }
 
 @Composable
-private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit) {
+private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit, importPreview: CatalogImportPreview?, onPreviewImport: (AuthenticatedSession, String) -> Unit, onCommitImport: (AuthenticatedSession, CatalogImportPreview, String, Boolean) -> Unit) {
     var showCatalog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    if(showCatalog) { CatalogEntryScreen(session,message,{ showCatalog=false },onCreateProduct); return }
+    if(showCatalog) { CatalogEntryScreen(session,message,{ showCatalog=false },onCreateProduct,importPreview,onPreviewImport,onCommitImport); return }
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Signed in")
         Text("Role: ${session.profile.role}")
@@ -202,9 +228,11 @@ private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLog
     }
 }
 
-@Composable private fun CatalogEntryScreen(session:AuthenticatedSession,message:String?,back:()->Unit,save:(AuthenticatedSession,String,String,String,String)->Unit) {
+@Composable private fun CatalogEntryScreen(session:AuthenticatedSession,message:String?,back:()->Unit,save:(AuthenticatedSession,String,String,String,String)->Unit,importPreview:CatalogImportPreview?,previewImport:(AuthenticatedSession,String)->Unit,commitImport:(AuthenticatedSession,CatalogImportPreview,String,Boolean)->Unit) {
  var sku by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }; var name by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }; var price by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }; var reason by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
- Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) { Text("Catalog — manual entry"); OutlinedTextField(sku,{sku=it},label={Text("SKU")}); OutlinedTextField(name,{name=it},label={Text("Product name")}); OutlinedTextField(price,{price=it},label={Text("VAT-inclusive price")}); OutlinedTextField(reason,{reason=it},label={Text("Reason")}); if(message!=null)Text(message); Button(onClick={save(session,sku,name,price,reason)}){Text("Save product")}; Button(onClick=back){Text("Back")} }
+ val context = LocalContext.current
+ val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { selected -> runCatching { context.contentResolver.openInputStream(selected)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: error("Unable to open CSV") }.onSuccess { previewImport(session, it) } } }
+ Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) { Text("Catalog — manual entry"); Text("Tax and eligibility are explicit per SKU; this starter form creates a VATable, no-benefit retail SKU."); OutlinedTextField(sku,{sku=it},label={Text("SKU")}); OutlinedTextField(name,{name=it},label={Text("Product name")}); OutlinedTextField(price,{price=it},label={Text("VAT-inclusive price")}); OutlinedTextField(reason,{reason=it},label={Text("Reason (required for audit)")}); if(message!=null)Text(message); Button(enabled=sku.isNotBlank() && name.isNotBlank() && price.isNotBlank() && reason.isNotBlank(),onClick={save(session,sku,name,price,reason)}){Text("Save product")}; Spacer(Modifier.height(12.dp)); Button(onClick={picker.launch(arrayOf("text/csv","text/comma-separated-values"))}){Text("Choose catalog CSV")}; importPreview?.let { preview -> Text("CSV preview: ${preview.validRows.size} valid, ${preview.rejectedRows.size} invalid"); preview.rejectedRows.take(5).forEach { row -> Text("Row ${row.rowNumber}: ${row.errors.joinToString { error -> "${error.field}: ${error.message}" }}") }; if(preview.rejectedRows.isEmpty()) Button(enabled=reason.isNotBlank(),onClick={commitImport(session,preview,reason,false)}){Text("Confirm full import")}; if(preview.validRows.isNotEmpty() && preview.rejectedRows.isNotEmpty()) Button(enabled=reason.isNotBlank(),onClick={commitImport(session,preview,reason,true)}){Text("Confirm reviewed valid rows only")} }; Button(onClick=back){Text("Back")} }
 }
 
 private sealed interface AuthState {

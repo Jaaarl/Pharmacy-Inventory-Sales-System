@@ -28,7 +28,9 @@ data class ImportRowResultEntity(@PrimaryKey val id: String, val manifestId: Str
 
 @Dao interface CatalogDao {
  @Query("SELECT * FROM products WHERE sku = :sku") suspend fun productBySku(sku: String): ProductEntity?
+ @Query("SELECT * FROM products WHERE id = :id") suspend fun productById(id: String): ProductEntity?
  @Query("SELECT * FROM product_barcodes WHERE barcode = :barcode") suspend fun barcode(barcode: String): ProductBarcodeEntity?
+ @Query("SELECT * FROM product_barcodes WHERE productId = :productId ORDER BY barcode") suspend fun barcodesForProduct(productId: String): List<ProductBarcodeEntity>
  @Query("SELECT COUNT(*) FROM products") suspend fun count(): Int
  @Query("SELECT COUNT(*) FROM product_price_versions WHERE productId = :id") suspend fun priceVersionCount(id:String): Int
  @Query("SELECT * FROM product_price_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestPrice(id:String): ProductPriceVersionEntity?
@@ -42,5 +44,7 @@ data class ImportRowResultEntity(@PrimaryKey val id: String, val manifestId: Str
  @Insert suspend fun insertLots(values: List<InventoryLotEntity>)
  @Insert suspend fun insertManifest(value: ImportManifestEntity)
  @Insert suspend fun insertResults(values: List<ImportRowResultEntity>)
+ @Query("DELETE FROM product_barcodes WHERE productId = :productId AND barcode = :barcode") suspend fun deleteBarcode(productId: String, barcode: String): Int
+ @Query("UPDATE products SET reorderLevel = :reorderLevel, updatedAt = :at WHERE id = :id") suspend fun updateReorderLevel(id: String, reorderLevel: String, at: Long): Int
  @Query("UPDATE products SET active = 0, updatedAt = :at WHERE id = :id") suspend fun deactivate(id: String, at: Long)
 }
