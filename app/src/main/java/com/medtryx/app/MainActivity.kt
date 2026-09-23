@@ -51,7 +51,7 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             MedtryxDatabase::class.java,
             "medtryx.db",
-        ).build()
+        ).addMigrations(MedtryxDatabase.MIGRATION_1_2, MedtryxDatabase.MIGRATION_2_3).build()
         val preferences = getSharedPreferences("medtryx_device", MODE_PRIVATE)
         val deviceId = preferences.getString("id", null) ?: java.util.UUID.randomUUID().toString().also {
             preferences.edit().putString("id", it).apply()
@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         lifecycleScope.launch {
+            withContext(Dispatchers.IO) { authenticationService.revokeDeviceSessions("APP_RESTART_SESSION_INVALIDATION") }
             authState = withContext(Dispatchers.IO) {
                 if (authDatabase.authDao().userCount() == 0) AuthState.OwnerSetup else AuthState.SignIn
             }
@@ -81,6 +82,7 @@ class MainActivity : ComponentActivity() {
                         onCreateOwner = ::createOwner,
                         onLogin = ::login,
                         onLogout = ::logout,
+                        onLock = ::lock,
                     )
                 }
             }
@@ -109,15 +111,21 @@ class MainActivity : ComponentActivity() {
         withContext(Dispatchers.IO) { authenticationService.logout(current.session.sessionId) }
         authState = AuthState.SignIn
     }
+
+    private fun lock() = lifecycleScope.launch {
+        val current = authState as? AuthState.SignedIn ?: return@launch
+        withContext(Dispatchers.IO) { authenticationService.lockForInactivity(current.session.sessionId) }
+        authState = AuthState.SignIn
+    }
 }
 
 @Composable
-private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit) {
+private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit) {
     when (authState) {
         AuthState.Loading -> LoadingScreen()
         AuthState.OwnerSetup -> OwnerSetupScreen(message, onCreateOwner)
         AuthState.SignIn -> LoginScreen(message, onLogin)
-        is AuthState.SignedIn -> SignedInScreen(authState.session, onLogout)
+        is AuthState.SignedIn -> SignedInScreen(authState.session, onLogout, onLock)
     }
 }
 
@@ -166,12 +174,14 @@ private fun AuthForm(title: String, message: String?, fields: List<Pair<String, 
 }
 
 @Composable
-private fun SignedInScreen(session: AuthenticatedSession, onLogout: () -> Unit) {
+private fun SignedInScreen(session: AuthenticatedSession, onLogout: () -> Unit, onLock: () -> Unit) {
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Signed in")
         Text("Role: ${session.profile.role}")
         Text("F01 authentication foundation is active.")
         Spacer(Modifier.height(16.dp))
+        Button(onClick = onLock) { Text("Lock") }
+        Spacer(Modifier.height(8.dp))
         Button(onClick = onLogout) { Text("Sign out") }
     }
 }

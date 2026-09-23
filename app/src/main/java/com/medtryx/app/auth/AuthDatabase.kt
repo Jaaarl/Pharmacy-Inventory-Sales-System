@@ -12,6 +12,9 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.medtryx.app.catalog.*
 
 @Entity(tableName = "users", indices = [Index(value = ["username"], unique = true)])
 data class UserEntity(
@@ -78,6 +81,8 @@ data class AuditEventEntity(
     val actorUserId: String?,
     val occurredAtUtcMillis: Long,
     val deviceId: String,
+    /** Session context is retained without storing a credential or token. */
+    val sessionId: String?,
     val action: String,
     val result: AuditResult,
     val entityReference: String?,
@@ -95,6 +100,10 @@ class AuthConverters {
     @TypeConverter fun stringToAttemptResult(value: String): AuthenticationAttemptResult = AuthenticationAttemptResult.valueOf(value)
     @TypeConverter fun auditResultToString(value: AuditResult): String = value.name
     @TypeConverter fun stringToAuditResult(value: String): AuditResult = AuditResult.valueOf(value)
+    @TypeConverter fun taxClassToString(value: TaxClass): String = value.name
+    @TypeConverter fun stringToTaxClass(value: String): TaxClass = TaxClass.valueOf(value)
+    @TypeConverter fun eligibilityToString(value: BenefitEligibility): String = value.name
+    @TypeConverter fun stringToEligibility(value: String): BenefitEligibility = BenefitEligibility.valueOf(value)
 }
 
 @Dao
@@ -106,6 +115,7 @@ interface AuthDao {
     @Query("SELECT permission FROM user_permission_grants WHERE userId = :userId") suspend fun permissionGrantsFor(userId: String): List<Permission>
     @Query("SELECT COUNT(*) FROM authentication_attempts WHERE username = :username AND attemptedAtUtcMillis >= :since AND result = 'INVALID_CREDENTIALS'") suspend fun failuresSince(username: String, since: Long): Int
     @Query("SELECT * FROM sessions WHERE id = :sessionId LIMIT 1") suspend fun session(sessionId: String): SessionEntity?
+    @Query("SELECT * FROM audit_events ORDER BY occurredAtUtcMillis") suspend fun auditEvents(): List<AuditEventEntity>
     @Insert suspend fun insertUser(user: UserEntity)
     @Insert suspend fun insertCredential(credential: CredentialEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertPermissionGrants(grants: List<UserPermissionGrantEntity>)
@@ -114,6 +124,7 @@ interface AuthDao {
     @Insert suspend fun insertAudit(event: AuditEventEntity)
     @Query("UPDATE sessions SET revokedAtUtcMillis = :at WHERE userId = :userId AND revokedAtUtcMillis IS NULL") suspend fun revokeSessionsForUser(userId: String, at: Long)
     @Query("UPDATE sessions SET revokedAtUtcMillis = :at WHERE id = :sessionId AND revokedAtUtcMillis IS NULL") suspend fun revokeSession(sessionId: String, at: Long)
+    @Query("UPDATE sessions SET revokedAtUtcMillis = :at WHERE deviceId = :deviceId AND revokedAtUtcMillis IS NULL") suspend fun revokeSessionsForDevice(deviceId: String, at: Long)
     @Query("UPDATE sessions SET lastActivityAtUtcMillis = :at, lockedAtUtcMillis = NULL WHERE id = :sessionId") suspend fun touchSession(sessionId: String, at: Long)
     @Query("UPDATE sessions SET lockedAtUtcMillis = :at WHERE id = :sessionId") suspend fun lockSession(sessionId: String, at: Long)
     @Query("UPDATE users SET isActive = :active, updatedAtUtcMillis = :at WHERE id = :userId") suspend fun setUserActive(userId: String, active: Boolean, at: Long)
@@ -123,11 +134,35 @@ interface AuthDao {
 }
 
 @Database(
-    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class],
-    version = 1,
+    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class],
+    version = 3,
     exportSchema = true,
 )
 @TypeConverters(AuthConverters::class)
 abstract class MedtryxDatabase : RoomDatabase() {
     abstract fun authDao(): AuthDao
+    abstract fun catalogDao(): CatalogDao
+
+    companion object {
+        /** Additive migration: audit history remains append-only. */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE audit_events ADD COLUMN sessionId TEXT")
+            }
+        }
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS products (id TEXT NOT NULL PRIMARY KEY, sku TEXT NOT NULL, name TEXT NOT NULL, genericName TEXT, brand TEXT, strength TEXT, dosageForm TEXT, unit TEXT NOT NULL, packSize TEXT, active INTEGER NOT NULL, reorderLevel TEXT NOT NULL, requiresLotExpiry INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_products_sku ON products(sku)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS product_barcodes (productId TEXT NOT NULL, barcode TEXT NOT NULL, PRIMARY KEY(productId, barcode), FOREIGN KEY(productId) REFERENCES products(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_product_barcodes_barcode ON product_barcodes(barcode)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS product_price_versions (id TEXT NOT NULL PRIMARY KEY, productId TEXT NOT NULL, sellingCentavos INTEGER NOT NULL, costCentavos INTEGER, effectiveFrom TEXT NOT NULL, effectiveTo TEXT, approvedBy TEXT NOT NULL, reason TEXT NOT NULL, FOREIGN KEY(productId) REFERENCES products(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS tax_class_versions (id TEXT NOT NULL PRIMARY KEY, productId TEXT NOT NULL, taxClass TEXT NOT NULL, source TEXT NOT NULL, effectiveFrom TEXT NOT NULL, effectiveTo TEXT, approvedBy TEXT NOT NULL, reason TEXT NOT NULL, FOREIGN KEY(productId) REFERENCES products(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS benefit_rule_versions (id TEXT NOT NULL PRIMARY KEY, productId TEXT NOT NULL, eligibility TEXT NOT NULL, effectiveFrom TEXT NOT NULL, effectiveTo TEXT, approvedBy TEXT NOT NULL, reason TEXT NOT NULL, FOREIGN KEY(productId) REFERENCES products(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS inventory_lots (id TEXT NOT NULL PRIMARY KEY, productId TEXT NOT NULL, lotNumber TEXT NOT NULL, expiryDate TEXT, openingQuantity TEXT NOT NULL, supplierReference TEXT, FOREIGN KEY(productId) REFERENCES products(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS import_manifests (id TEXT NOT NULL PRIMARY KEY, checksum TEXT NOT NULL, actorUserId TEXT NOT NULL, createdAt INTEGER NOT NULL, acceptedCount INTEGER NOT NULL, rejectedCount INTEGER NOT NULL, subsetCommitted INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS import_row_results (id TEXT NOT NULL PRIMARY KEY, manifestId TEXT NOT NULL, rowNumber INTEGER NOT NULL, accepted INTEGER NOT NULL, errors TEXT, resultingProductId TEXT, FOREIGN KEY(manifestId) REFERENCES import_manifests(id) ON DELETE CASCADE)")
+            }
+        }
+    }
 }
