@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             MedtryxDatabase::class.java,
             "medtryx.db",
-        ).addMigrations(MedtryxDatabase.MIGRATION_1_2, MedtryxDatabase.MIGRATION_2_3).build()
+        ).addMigrations(MedtryxDatabase.MIGRATION_1_2, MedtryxDatabase.MIGRATION_2_3, MedtryxDatabase.MIGRATION_3_4).build()
         val preferences = getSharedPreferences("medtryx_device", MODE_PRIVATE)
         val deviceId = preferences.getString("id", null) ?: java.util.UUID.randomUUID().toString().also {
             preferences.edit().putString("id", it).apply()

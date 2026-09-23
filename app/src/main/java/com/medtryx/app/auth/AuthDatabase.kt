@@ -104,6 +104,8 @@ class AuthConverters {
     @TypeConverter fun stringToTaxClass(value: String): TaxClass = TaxClass.valueOf(value)
     @TypeConverter fun eligibilityToString(value: BenefitEligibility): String = value.name
     @TypeConverter fun stringToEligibility(value: String): BenefitEligibility = BenefitEligibility.valueOf(value)
+    @TypeConverter fun inventoryMovementTypeToString(value: InventoryMovementType): String = value.name
+    @TypeConverter fun stringToInventoryMovementType(value: String): InventoryMovementType = InventoryMovementType.valueOf(value)
 }
 
 @Dao
@@ -134,14 +136,15 @@ interface AuthDao {
 }
 
 @Database(
-    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class],
-    version = 3,
+    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, InventoryMovementEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class],
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(AuthConverters::class)
 abstract class MedtryxDatabase : RoomDatabase() {
     abstract fun authDao(): AuthDao
     abstract fun catalogDao(): CatalogDao
+    abstract fun inventoryDao(): InventoryDao
 
     companion object {
         /** Additive migration: audit history remains append-only. */
@@ -162,6 +165,16 @@ abstract class MedtryxDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS inventory_lots (id TEXT NOT NULL PRIMARY KEY, productId TEXT NOT NULL, lotNumber TEXT NOT NULL, expiryDate TEXT, openingQuantity TEXT NOT NULL, supplierReference TEXT, FOREIGN KEY(productId) REFERENCES products(id) ON DELETE CASCADE)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS import_manifests (id TEXT NOT NULL PRIMARY KEY, checksum TEXT NOT NULL, actorUserId TEXT NOT NULL, createdAt INTEGER NOT NULL, acceptedCount INTEGER NOT NULL, rejectedCount INTEGER NOT NULL, subsetCommitted INTEGER NOT NULL)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS import_row_results (id TEXT NOT NULL PRIMARY KEY, manifestId TEXT NOT NULL, rowNumber INTEGER NOT NULL, accepted INTEGER NOT NULL, errors TEXT, resultingProductId TEXT, FOREIGN KEY(manifestId) REFERENCES import_manifests(id) ON DELETE CASCADE)")
+            }
+        }
+        /** Preserves imported opening lots by materializing their opening quantities in the immutable ledger. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS inventory_movements (id TEXT NOT NULL PRIMARY KEY, productId TEXT NOT NULL, lotId TEXT, type TEXT NOT NULL, quantity TEXT NOT NULL, unit TEXT NOT NULL, expiryDate TEXT, costCentavos INTEGER, sourceReference TEXT, actorUserId TEXT NOT NULL, occurredAtUtcMillis INTEGER NOT NULL, reason TEXT NOT NULL, FOREIGN KEY(productId) REFERENCES products(id) ON DELETE RESTRICT, FOREIGN KEY(lotId) REFERENCES inventory_lots(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_productId ON inventory_movements(productId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_lotId ON inventory_movements(lotId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_occurredAtUtcMillis ON inventory_movements(occurredAtUtcMillis)")
+                db.execSQL("INSERT INTO inventory_movements (id, productId, lotId, type, quantity, unit, expiryDate, costCentavos, sourceReference, actorUserId, occurredAtUtcMillis, reason) SELECT 'migration-opening-' || l.id, l.productId, l.id, 'OPENING_BALANCE', l.openingQuantity, p.unit, l.expiryDate, NULL, l.supplierReference, 'MIGRATION', 0, 'F02 opening stock migrated to immutable ledger' FROM inventory_lots l JOIN products p ON p.id = l.productId WHERE l.openingQuantity <> '0'")
             }
         }
     }

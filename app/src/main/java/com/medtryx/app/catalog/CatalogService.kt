@@ -74,7 +74,10 @@ class CatalogService(private val db: MedtryxDatabase, private val authorizer: Pr
   dao.insertPrice(ProductPriceVersionEntity(UUID.randomUUID().toString(),id,centavos(d.sellingPrice),d.unitCost?.let(::centavos),start,end,actor,reason))
   dao.insertTax(TaxClassVersionEntity(UUID.randomUUID().toString(),id,d.taxClass,d.taxSource.trim(),start,end,actor,reason))
   dao.insertBenefit(BenefitRuleVersionEntity(UUID.randomUUID().toString(),id,d.benefitEligibility,start,end,actor,reason))
-  dao.insertLots(d.openingLots.map { InventoryLotEntity(UUID.randomUUID().toString(),id,it.lotNumber.trim(),it.expiryDate?.toString(),it.quantity.stripTrailingZeros().toPlainString(),it.supplierReference) }); return id
+  val lots = d.openingLots.map { InventoryLotEntity(UUID.randomUUID().toString(),id,it.lotNumber.trim(),it.expiryDate?.toString(),it.quantity.stripTrailingZeros().toPlainString(),it.supplierReference) }
+  dao.insertLots(lots)
+  lots.forEach { lot -> db.inventoryDao().insertMovement(InventoryMovementEntity(UUID.randomUUID().toString(), id, lot.id, InventoryMovementType.OPENING_BALANCE, lot.openingQuantity, d.unit.trim(), lot.expiryDate, d.unitCost?.let(::centavos), lot.supplierReference, actor, now, reason)) }
+  return id
  }
  internal suspend fun recordImportAudit(sessionId: String, manifest: ImportManifestEntity, resultingIds: List<String>, reason: String) {
   auth?.recordApplicationAudit(sessionId, "CATALOG_IMPORT_COMMITTED", manifest.id, reason, null, "checksum=${manifest.checksum};accepted=${manifest.acceptedCount};rejected=${manifest.rejectedCount};subset=${manifest.subsetCommitted};productIds=${resultingIds.joinToString(",")}")
