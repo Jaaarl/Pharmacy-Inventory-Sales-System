@@ -33,12 +33,19 @@ import com.medtryx.app.auth.AuthenticationService
 import com.medtryx.app.auth.LoginResult
 import com.medtryx.app.auth.MedtryxDatabase
 import com.medtryx.app.auth.PasswordHasher
+import com.medtryx.app.auth.ProtectedActionAuthorizer
+import com.medtryx.app.auth.Permission
+import com.medtryx.app.auth.PermissionPolicy
+import com.medtryx.app.catalog.*
+import java.math.BigDecimal
+import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
     private var launchCount by mutableIntStateOf(0)
     private var authState by mutableStateOf<AuthState>(AuthState.Loading)
     private var authMessage by mutableStateOf<String?>(null)
     private lateinit var authenticationService: AuthenticationService
+    private lateinit var catalogService: CatalogService
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +64,7 @@ class MainActivity : ComponentActivity() {
             preferences.edit().putString("id", it).apply()
         }
         authenticationService = AuthenticationService(authDatabase, PasswordHasher(), deviceId)
+        catalogService = CatalogService(authDatabase, ProtectedActionAuthorizer(authenticationService), authenticationService)
 
         lifecycleScope.launch {
             launchCount = withContext(Dispatchers.IO) {
@@ -83,6 +91,7 @@ class MainActivity : ComponentActivity() {
                         onLogin = ::login,
                         onLogout = ::logout,
                         onLock = ::lock,
+                        onCreateProduct = ::createProduct,
                     )
                 }
             }
@@ -117,15 +126,19 @@ class MainActivity : ComponentActivity() {
         withContext(Dispatchers.IO) { authenticationService.lockForInactivity(current.session.sessionId) }
         authState = AuthState.SignIn
     }
+    private fun createProduct(session: AuthenticatedSession, sku:String, name:String, price:String, reason:String) = lifecycleScope.launch {
+        authMessage=null
+        runCatching { withContext(Dispatchers.IO) { catalogService.createProduct(session.sessionId, ProductDraft(sku,name,unit="piece",sellingPrice=BigDecimal(price),taxClass=TaxClass.VATABLE,taxSource="Pending approved catalog source",taxValidFrom=LocalDate.now(),benefitEligibility=BenefitEligibility.NONE,prescriptionClass=PrescriptionClass.OTHER,reorderLevel=BigDecimal.ZERO,requiresLotExpiry=false),reason) } }.onSuccess { authMessage="Product saved." }.onFailure { authMessage=it.message?:"Unable to save product." }
+    }
 }
 
 @Composable
-private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit) {
+private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit) {
     when (authState) {
         AuthState.Loading -> LoadingScreen()
         AuthState.OwnerSetup -> OwnerSetupScreen(message, onCreateOwner)
         AuthState.SignIn -> LoginScreen(message, onLogin)
-        is AuthState.SignedIn -> SignedInScreen(authState.session, onLogout, onLock)
+        is AuthState.SignedIn -> SignedInScreen(authState.session, message, onLogout, onLock, onCreateProduct)
     }
 }
 
@@ -174,16 +187,24 @@ private fun AuthForm(title: String, message: String?, fields: List<Pair<String, 
 }
 
 @Composable
-private fun SignedInScreen(session: AuthenticatedSession, onLogout: () -> Unit, onLock: () -> Unit) {
+private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit) {
+    var showCatalog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if(showCatalog) { CatalogEntryScreen(session,message,{ showCatalog=false },onCreateProduct); return }
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Signed in")
         Text("Role: ${session.profile.role}")
         Text("F01 authentication foundation is active.")
+        if (PermissionPolicy.allows(session.profile, Permission.PRODUCT_MANAGE)) Button(onClick={showCatalog=true}) { Text("Add product") }
         Spacer(Modifier.height(16.dp))
         Button(onClick = onLock) { Text("Lock") }
         Spacer(Modifier.height(8.dp))
         Button(onClick = onLogout) { Text("Sign out") }
     }
+}
+
+@Composable private fun CatalogEntryScreen(session:AuthenticatedSession,message:String?,back:()->Unit,save:(AuthenticatedSession,String,String,String,String)->Unit) {
+ var sku by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }; var name by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }; var price by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }; var reason by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+ Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) { Text("Catalog — manual entry"); OutlinedTextField(sku,{sku=it},label={Text("SKU")}); OutlinedTextField(name,{name=it},label={Text("Product name")}); OutlinedTextField(price,{price=it},label={Text("VAT-inclusive price")}); OutlinedTextField(reason,{reason=it},label={Text("Reason")}); if(message!=null)Text(message); Button(onClick={save(session,sku,name,price,reason)}){Text("Save product")}; Button(onClick=back){Text("Back")} }
 }
 
 private sealed interface AuthState {
