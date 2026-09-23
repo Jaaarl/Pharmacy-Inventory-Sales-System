@@ -23,6 +23,10 @@ class CatalogService(private val db: MedtryxDatabase, private val authorizer: Pr
  suspend fun changeTaxClass(sessionId:String, productId:String, value:TaxClass, source:String, effectiveFrom:String, reason:String) {
   val actor=authorizer.require(sessionId,Permission.TAX_CONFIGURATION_CHANGE,"PRODUCT_TAX_CHANGE",productId,reason); require(source.isNotBlank()) { "Tax source is required." }; db.withTransaction { val old=db.catalogDao().latestTax(productId)?:error("Product tax does not exist."); db.catalogDao().insertTax(TaxClassVersionEntity(UUID.randomUUID().toString(),productId,value,source,effectiveFrom,null,actor.userId,reason)); auth?.recordApplicationAudit(sessionId,"PRODUCT_TAX_CHANGED",productId,reason,"${old.taxClass}:${old.source}","$value:$source") }
  }
+ suspend fun changeBenefitEligibility(sessionId:String, productId:String, value:BenefitEligibility, effectiveFrom:String, reason:String) {
+  val actor=authorizer.require(sessionId,Permission.BENEFIT_ELIGIBILITY_CHANGE,"PRODUCT_BENEFIT_CHANGE",productId,reason)
+  db.withTransaction { val old=db.catalogDao().latestBenefit(productId)?:error("Product benefit rule does not exist."); db.catalogDao().insertBenefit(BenefitRuleVersionEntity(UUID.randomUUID().toString(),productId,value,effectiveFrom,null,actor.userId,reason)); auth?.recordApplicationAudit(sessionId,"PRODUCT_BENEFIT_CHANGED",productId,reason,old.eligibility.name,value.name) }
+ }
  internal suspend fun persist(d: ProductDraft, actor: String, reason: String): String {
   val dao = db.catalogDao(); val sku=d.sku.trim().uppercase(); check(dao.productBySku(sku)==null) { "Duplicate SKU: $sku" }; d.barcodes.forEach { check(dao.barcode(it.trim())==null) { "Duplicate barcode: $it" } }
   val id=UUID.randomUUID().toString(); val now=clock(); val start=d.taxValidFrom.toString(); val end=d.taxValidTo?.toString()

@@ -14,14 +14,23 @@ data class CatalogImportPreview(val checksum: String, val rows: List<ImportRowPr
 /** UTF-8 CSV catalog importer. It never changes input values during validation. */
 class CsvCatalogImporter(private val db: MedtryxDatabase, private val catalog: CatalogService, private val authorizer: ProtectedActionAuthorizer, private val clock: () -> Long = System::currentTimeMillis, private val afterProductWrite: suspend () -> Unit = {}) {
  fun preview(csv: String): CatalogImportPreview {
-  val records = parse(csv); if (records.isEmpty()) return CatalogImportPreview(catalog.checksum(csv), emptyList())
+  val records = try { parse(csv) } catch (error: IllegalArgumentException) { return CatalogImportPreview(catalog.checksum(csv), listOf(ImportRowPreview(1,null,listOf(ValidationError("csv",error.message ?: "Malformed CSV"))))) }; if (records.isEmpty()) return CatalogImportPreview(catalog.checksum(csv), emptyList())
   val headers = records.first().map { it.trim().lowercase() }; val required=setOf("sku","name","unit","selling_price","tax_class","tax_source","tax_valid_from","benefit_eligibility","prescription_class","reorder_level","requires_lot_expiry")
   val missing=required-headers.toSet(); return CatalogImportPreview(catalog.checksum(csv), records.drop(1).mapIndexed { i,row ->
    val errors=mutableListOf<ValidationError>(); if(missing.isNotEmpty()) errors+=ValidationError("header","Missing: ${missing.sorted().joinToString()}")
    fun v(key:String)=headers.indexOf(key).takeIf { it>=0 }?.let { row.getOrElse(it){""} } ?: ""
-   val draft=runCatching { ProductDraft(v("sku"),v("name"),v("generic_name").ifBlank{null},v("brand").ifBlank{null},v("strength").ifBlank{null},v("dosage_form").ifBlank{null},v("unit"),v("pack_size").ifBlank{null}?.let(::BigDecimal),BigDecimal(v("selling_price")),v("unit_cost").ifBlank{null}?.let(::BigDecimal),TaxClass.valueOf(v("tax_class")),v("tax_source"),LocalDate.parse(v("tax_valid_from")),v("tax_valid_to").ifBlank{null}?.let(LocalDate::parse),BenefitEligibility.valueOf(v("benefit_eligibility")),PrescriptionClass.valueOf(v("prescription_class")),BigDecimal(v("reorder_level")),v("requires_lot_expiry").equals("true",true),v("barcodes").split("|").filter(String::isNotBlank).toSet(), emptyList()) }.getOrElse { errors+=ValidationError("row",it.message?:"Malformed value"); null }
+   val draft=runCatching { ProductDraft(v("sku"),v("name"),v("generic_name").ifBlank{null},v("brand").ifBlank{null},v("strength").ifBlank{null},v("dosage_form").ifBlank{null},v("unit"),v("pack_size").ifBlank{null}?.let(::BigDecimal),BigDecimal(v("selling_price")),v("unit_cost").ifBlank{null}?.let(::BigDecimal),TaxClass.valueOf(v("tax_class")),v("tax_source"),LocalDate.parse(v("tax_valid_from")),v("tax_valid_to").ifBlank{null}?.let(LocalDate::parse),BenefitEligibility.valueOf(v("benefit_eligibility")),PrescriptionClass.valueOf(v("prescription_class")),BigDecimal(v("reorder_level")),v("requires_lot_expiry").equals("true",true),v("barcodes").split("|").filter(String::isNotBlank).toSet(), v("opening_quantity").ifBlank{null}?.let { listOf(OpeningLotDraft(v("lot_number"),v("expiry_date").ifBlank{null}?.let(LocalDate::parse),BigDecimal(it),v("supplier_reference").ifBlank{null})) } ?: emptyList()) }.getOrElse { errors+=ValidationError("row",it.message?:"Malformed value"); null }
    if(draft!=null) errors+=ProductValidator.validate(draft); ImportRowPreview(i+2,draft,errors)
-  })
+  }.let { rows ->
+   val skus=rows.filter{it.draft!=null}.groupBy{it.draft!!.sku.trim().uppercase()}.filterValues{it.size>1}
+   val barcodes=rows.flatMap{r->r.draft?.barcodes?.map{it to r}?:emptyList()}.groupBy{it.first}.filterValues{it.size>1}
+   rows.map { row ->
+    val duplicateErrors=mutableListOf<ValidationError>()
+    if(skus.containsKey(row.draft?.sku?.trim()?.uppercase())) duplicateErrors+=ValidationError("sku","Duplicate SKU in import.")
+    row.draft?.barcodes.orEmpty().filter{barcodes.containsKey(it)}.forEach { duplicateErrors+=ValidationError("barcodes","Duplicate barcode in import: $it") }
+    row.copy(errors=row.errors + duplicateErrors)
+    }
+   })
  }
  suspend fun commit(sessionId:String, preview:CatalogImportPreview, reason:String, reviewedSubset:Set<Int>?=null): List<String> {
   val actor=authorizer.require(sessionId,Permission.PRODUCT_MANAGE,"CATALOG_IMPORT",preview.checksum,reason)

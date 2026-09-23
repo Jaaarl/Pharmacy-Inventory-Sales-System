@@ -367,3 +367,15 @@ A change is complete only when:
 - documentation is updated for intentional behavior changes; and
 - the master specification and affected `docs/features/Fxx-*.md` file remain synchronized; and
 - the change has been tested in proportion to its risk, including on the physical target device when it affects Android/HarmonyOS behavior.
+
+## Completion Discipline
+
+When the user requests implementation of a feature or implementation-priority document:
+
+- Treat the request as one continuous task.
+- Do not stop after a partial subfeature, successful compile, test, or checkpoint commit.
+- Do not ask whether to continue unless blocked by missing authority, missing required information, or an unrecoverable technical issue.
+- Continue until every applicable requirement, data model, acceptance criterion, test, documentation update, and verification step in the requested scope is complete.
+- Make commits only when the user explicitly asks, or when the entire requested feature is complete. Do not use partial commits as a reason to pause work.
+- If physical-device or later-feature integration checks cannot be run, document them as deferred and continue all remaining implementable work.
+- Final responses must clearly state either the full requested scope is complete and verified, or the exact blocker preventing completion.
