@@ -1,0 +1,166 @@
+# =============================================================================
+# Medtryx — Git Ignore
+# Pharmacy POS built with Kotlin + Jetpack Compose for HUAWEI MatePad 11.5.
+# =============================================================================
+
+# ----- Gradle / Build outputs ------------------------------------------------
+.gradle/
+build/
+out/
+**/build/
+!**/src/**/build/
+
+# Keep the Gradle wrapper script and config tracked; ignore the local cache.
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# ----- Android / Compose generated files -------------------------------------
+**/generated/
+**/generated/**/
+local.properties
+local.properties.*
+*.apk
+*.aab
+*.ap_
+*.aar
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+
+# Captures and profiling output
+captures/
+*.hprof
+*.trace
+
+# ----- Kotlin ----------------------------------------------------------------
+.kotlin/
+*.kotlin_module
+*.kotlin_metadata
+
+# ----- Native / JNI ----------------------------------------------------------
+.cxx/
+**/obj/
+**/libs/
+
+# ----- IDEs (Android Studio, IntelliJ IDEA) ----------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+studio/
+.vscode/
+*.swp
+*.swo
+
+# ----- Keystores, secrets, and signing material ------------------------------
+# AGENTS.md requires keystore-protected encryption and fresh auth for risky ops.
+# Never commit signing material, keystores, or local credentials.
+*.jks
+*.keystore
+*.keystore.*
+keystore.properties
+secrets.properties
+*.pfx
+*.p12
+google-services.json
+firebase-*
+
+# ----- Local databases and runtime data --------------------------------------
+# Room/SQLite databases must not be committed; backups go through the system
+# file picker per AGENTS.md (Backup and Restore section).
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlitedb
+
+# ----- Encrypted backups and exports -----------------------------------------
+# Backups are user-placed via the tablet's file manager and verified after
+# writing per AGENTS.md. Ignore them anywhere they might appear in the tree.
+*.medtryx-backup
+*.bak
+*.tmp
+*.temp
+
+# ----- CSV imports / test fixtures -------------------------------------------
+# Per AGENTS.md, catalog imports go through preview + auth. Ignore local
+# working files used during manual imports/exports.
+*.csv.local
+import_preview_*.csv
+
+# ----- Test mode artifacts ---------------------------------------------------
+# Test Mode uses a separate database and a different transaction-id prefix;
+# AGENTS.md forbids it from altering live data. Keep its dumps out of git.
+test_mode_*.db
+test_mode_export_*.csv
+
+# ----- Local server / dashboard ----------------------------------------------
+# Local HTTPS dashboard sessions and pairing tokens must not be committed.
+**/.server/
+**/server.pid
+**/server.log
+**/dashboard_session_*.token
+**/pairing_*.token
+**/keystore/dev-*.pem
+**/keystore/local-*.pem
+
+# ----- Logs ------------------------------------------------------------------
+*.log
+logs/
+**/logs/
+**/*.log.*
+
+# ----- OS / editor noise -----------------------------------------------------
+# Windows
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+System Volume Information/
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+
+# Linux
+*~
+.nfs*
+
+# ----- Coverage and static analysis ------------------------------------------
+coverage/
+**/coverage/
+*.coverage
+*.lcov
+.html
+.html.*
+*.xml.report.*
+
+# ----- Personal notes / working briefs ---------------------------------------
+# The original product brief lives here (e.g. .notes/Prompt.md). Keep it out
+# of git so unfinished thinking and scratch notes don't leak into history.
+.notes/
+NOTES.md
+SCRATCH.md
+
+# ----- Misc ------------------------------------------------------------------
+*.pid
+*.seed
+*.pidfile
+*.pidfile.lock
+*.pid.lock
+.env
+.env.*
+!.env.example

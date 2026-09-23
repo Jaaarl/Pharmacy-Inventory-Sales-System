@@ -1,0 +1,65 @@
+# F08 — Cashier Shifts and Cash Turnover
+
+**Phase:** 1 — Offline core  
+**Status:** MVP specification  
+**Master reference:** [Section 12](../Medtryx_Product_and_Technical_Specification.md#12-feature-f08--cashier-shifts-and-cash-turnover)
+
+## Purpose
+
+Attribute sales to individual cashier shifts and reconcile expected physical cash at turnover.
+
+## Shift Opening
+
+- Require an authenticated cashier.
+- Record opening cash float, device/store, user, and timestamp.
+- Prevent overlapping open shifts for the same cashier/device/store under the MVP policy.
+
+## Shift Closing
+
+```text
+expectedCash = openingFloat
+             + finalizedCashSales
+             + cashIn
+             - cashRefunds
+             - cashOut
+
+variance = actualCashCount - expectedCash
+```
+
+- QR and other non-cash declarations do not enter expected cash.
+- Support actual cash count and optional denomination entry.
+- Require a note for non-zero variance.
+- Require supervisor approval above the configured variance threshold.
+- Closed shifts are immutable; corrections use adjustments.
+
+## Turnover Report
+
+Include cashier/shift IDs, open/close times, opening float, sales totals, cash, QR, refunds, cash movements, expected/actual cash, variance, voids/reversals, and cashier/supervisor acknowledgement.
+
+## Acceptance Criteria
+
+- Every live cashier sale belongs to the correct active shift.
+- Expected cash follows the formula exactly.
+- QR never increases expected physical cash.
+- Unauthorized users cannot close another cashier's shift or approve a protected variance.
+- A closed shift cannot be edited or reopened directly.
+
+## Required Tests
+
+- Test opening float, cash sale, QR sale, cash in/out, cash refund, actual count, and variance.
+- Test zero, positive, negative, and threshold-boundary variances.
+- Test denomination totals and mismatch handling.
+- Test duplicate shift opening, wrong-cashier close, interrupted close, and immutable closed shifts.
+- Reconcile turnover report totals to F05 and F09 records.
+
+## Open Configuration
+
+- The variance amount requiring supervisor approval remains undecided.
+
+## Dependencies
+
+- F01 cashier and supervisor permissions.
+- F05 settlement declarations and sale attribution.
+- F09 cash refunds/voids.
+- F10 turnover reporting.
+
