@@ -142,6 +142,12 @@ class AuthenticationService(
         audit(session.userId, session.sessionId, action, AuditResult.SUCCESS, entityReference, reason); return session
     }
 
+    /** Domain use cases call this after an authorized mutation to retain concrete old/new evidence. */
+    suspend fun recordApplicationAudit(sessionId: String, action: String, entityReference: String, reason: String, oldValue: String?, newValue: String?) {
+        val session = activeSession(sessionId, true) ?: throw SecurityException("Session is no longer active.")
+        audit(session.userId, session.sessionId, action, AuditResult.SUCCESS, entityReference, reason, oldValue, newValue)
+    }
+
     private suspend fun requireProtectedSession(sessionId: String, permission: Permission, action: String, reference: String?, reason: String): AuthenticatedSession {
         val session = activeSession(sessionId, true)
         if (session == null) { audit(null, sessionId, action, AuditResult.REJECTED, reference, reason, newValue = "inactive session"); throw SecurityException("Session is no longer active.") }

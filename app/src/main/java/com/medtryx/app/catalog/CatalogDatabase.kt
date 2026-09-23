@@ -30,6 +30,9 @@ data class ImportRowResultEntity(@PrimaryKey val id: String, val manifestId: Str
  @Query("SELECT * FROM products WHERE sku = :sku") suspend fun productBySku(sku: String): ProductEntity?
  @Query("SELECT * FROM product_barcodes WHERE barcode = :barcode") suspend fun barcode(barcode: String): ProductBarcodeEntity?
  @Query("SELECT COUNT(*) FROM products") suspend fun count(): Int
+ @Query("SELECT * FROM product_price_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestPrice(id:String): ProductPriceVersionEntity?
+ @Query("SELECT * FROM tax_class_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestTax(id:String): TaxClassVersionEntity?
+ @Query("SELECT * FROM benefit_rule_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestBenefit(id:String): BenefitRuleVersionEntity?
  @Insert suspend fun insertProduct(value: ProductEntity)
  @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertBarcodes(values: List<ProductBarcodeEntity>)
  @Insert suspend fun insertPrice(value: ProductPriceVersionEntity)
