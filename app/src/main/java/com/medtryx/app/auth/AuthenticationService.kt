@@ -82,12 +82,58 @@ class AuthenticationService(
     }
 
     suspend fun disableUser(actor: AuthenticatedSession, targetUserId: String, reason: String) = database.withTransaction {
-        actor.profile.requirePermission(Permission.USER_MANAGE)
+        requireProtectedPermission(actor, Permission.USER_MANAGE, "USER_DISABLE", targetUserId, reason)
         require(reason.isNotBlank()) { "A reason is required." }
         val now = clock()
         database.authDao().setUserActive(targetUserId, false, now)
         database.authDao().revokeSessionsForUser(targetUserId, now)
         audit(actor.userId, "USER_DISABLED", AuditResult.SUCCESS, targetUserId, reason)
+    }
+
+    suspend fun setUserEnabled(actor: AuthenticatedSession, targetUserId: String, enabled: Boolean, reason: String) = database.withTransaction {
+        requireProtectedPermission(actor, Permission.USER_MANAGE, "USER_ENABLE_CHANGE", targetUserId, reason)
+        val now = clock()
+        database.authDao().setUserActive(targetUserId, enabled, now)
+        database.authDao().revokeSessionsForUser(targetUserId, now)
+        audit(actor.userId, if (enabled) "USER_ENABLED" else "USER_DISABLED", AuditResult.SUCCESS, targetUserId, reason)
+    }
+
+    suspend fun changeRole(actor: AuthenticatedSession, targetUserId: String, role: Role, reason: String) = database.withTransaction {
+        requireProtectedPermission(actor, Permission.USER_MANAGE, "USER_ROLE_CHANGE", targetUserId, reason)
+        val now = clock()
+        database.authDao().setRole(targetUserId, role, now)
+        database.authDao().revokeSessionsForUser(targetUserId, now)
+        audit(actor.userId, "USER_ROLE_CHANGED", AuditResult.SUCCESS, targetUserId, reason)
+    }
+
+    suspend fun setExplicitPermissions(actor: AuthenticatedSession, targetUserId: String, permissions: Set<Permission>, reason: String) = database.withTransaction {
+        requireProtectedPermission(actor, Permission.USER_MANAGE, "USER_PERMISSION_CHANGE", targetUserId, reason)
+        database.authDao().clearPermissionGrants(targetUserId)
+        database.authDao().upsertPermissionGrants(permissions.map { UserPermissionGrantEntity(targetUserId, it) })
+        database.authDao().revokeSessionsForUser(targetUserId, clock())
+        audit(actor.userId, "USER_PERMISSIONS_CHANGED", AuditResult.SUCCESS, targetUserId, reason)
+    }
+
+    suspend fun changeCredential(session: AuthenticatedSession, currentSecret: CharArray, newSecret: CharArray) = database.withTransaction {
+        validateSecret(newSecret)
+        val dao = database.authDao()
+        val credential = dao.credentialFor(session.userId)?.toPasswordHash()
+        if (credential == null || !passwordHasher.matches(currentSecret, credential)) {
+            audit(session.userId, "CREDENTIAL_CHANGE", AuditResult.REJECTED, session.userId)
+            throw SecurityException("Current PIN/password is invalid.")
+        }
+        val now = clock()
+        val replacement = passwordHasher.hash(newSecret)
+        dao.replaceCredential(session.userId, replacement.encodedHash, replacement.salt, replacement.iterations, replacement.algorithm, now)
+        dao.revokeSessionsForUser(session.userId, now)
+        audit(session.userId, "CREDENTIAL_CHANGED", AuditResult.SUCCESS, session.userId)
+    }
+
+    suspend fun freshAuthentication(session: AuthenticatedSession, secret: CharArray, action: String, entityReference: String?): Boolean = database.withTransaction {
+        val credential = database.authDao().credentialFor(session.userId)?.toPasswordHash()
+        val accepted = credential != null && passwordHasher.matches(secret, credential)
+        audit(session.userId, "FRESH_AUTH:$action", if (accepted) AuditResult.SUCCESS else AuditResult.REJECTED, entityReference)
+        accepted
     }
 
     private suspend fun invalid(username: String, now: Long): LoginResult {
@@ -98,6 +144,14 @@ class AuthenticationService(
 
     private suspend fun audit(actor: String?, action: String, result: AuditResult, reference: String?, reason: String? = null) {
         database.authDao().insertAudit(AuditEventEntity(UUID.randomUUID().toString(), actor, clock(), deviceId, action, result, reference, reason, null, null))
+    }
+
+    private suspend fun requireProtectedPermission(actor: AuthenticatedSession, permission: Permission, action: String, reference: String?, reason: String) {
+        require(reason.isNotBlank()) { "A reason is required." }
+        if (!PermissionPolicy.allows(actor.profile, permission)) {
+            audit(actor.userId, action, AuditResult.REJECTED, reference, reason)
+            throw AccessDeniedException(permission)
+        }
     }
 
     private fun newSession(user: UserEntity, now: Long) = SessionEntity(UUID.randomUUID().toString(), user.id, deviceId, now, now, now + SESSION_LIFETIME_MILLIS, null, null)

@@ -108,6 +108,7 @@ interface AuthDao {
     @Query("SELECT * FROM sessions WHERE id = :sessionId LIMIT 1") suspend fun session(sessionId: String): SessionEntity?
     @Insert suspend fun insertUser(user: UserEntity)
     @Insert suspend fun insertCredential(credential: CredentialEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertPermissionGrants(grants: List<UserPermissionGrantEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertSession(session: SessionEntity)
     @Insert suspend fun insertAttempt(attempt: AuthenticationAttemptEntity)
     @Insert suspend fun insertAudit(event: AuditEventEntity)
@@ -117,6 +118,7 @@ interface AuthDao {
     @Query("UPDATE sessions SET lockedAtUtcMillis = :at WHERE id = :sessionId") suspend fun lockSession(sessionId: String, at: Long)
     @Query("UPDATE users SET isActive = :active, updatedAtUtcMillis = :at WHERE id = :userId") suspend fun setUserActive(userId: String, active: Boolean, at: Long)
     @Query("UPDATE users SET role = :role, updatedAtUtcMillis = :at WHERE id = :userId") suspend fun setRole(userId: String, role: Role, at: Long)
+    @Query("DELETE FROM user_permission_grants WHERE userId = :userId") suspend fun clearPermissionGrants(userId: String)
     @Query("UPDATE credentials SET hash = :hash, salt = :salt, iterations = :iterations, algorithm = :algorithm, changedAtUtcMillis = :at WHERE userId = :userId") suspend fun replaceCredential(userId: String, hash: ByteArray, salt: ByteArray, iterations: Int, algorithm: String, at: Long)
 }
 
