@@ -8,6 +8,7 @@ import java.security.MessageDigest
 import java.util.UUID
 
 class CatalogService(private val db: MedtryxDatabase, private val authorizer: ProtectedActionAuthorizer, private val auth: AuthenticationService? = null, private val clock: () -> Long = System::currentTimeMillis) {
+ suspend fun products(): List<ProductEntity> = db.catalogDao().allProducts()
  suspend fun createProduct(sessionId: String, draft: ProductDraft, reason: String): String {
   val actor = authorizer.require(sessionId, Permission.PRODUCT_MANAGE, "PRODUCT_CREATE", draft.sku, reason)
   val errors = ProductValidator.validate(draft); require(errors.isEmpty()) { errors.joinToString { "${it.field}: ${it.message}" } }

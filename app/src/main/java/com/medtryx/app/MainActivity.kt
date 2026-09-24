@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var catalogService: CatalogService
     private lateinit var catalogImporter: CsvCatalogImporter
     private var catalogImportPreview by mutableStateOf<CatalogImportPreview?>(null)
+    private var catalogProducts by mutableStateOf<List<ProductEntity>>(emptyList())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,6 +89,7 @@ class MainActivity : ComponentActivity() {
             authState = withContext(Dispatchers.IO) {
                 if (authDatabase.authDao().userCount() == 0) AuthState.OwnerSetup else AuthState.SignIn
             }
+            catalogProducts = withContext(Dispatchers.IO) { catalogService.products() }
         }
 
         setContent {
@@ -100,7 +102,9 @@ class MainActivity : ComponentActivity() {
                         onLogin = ::login,
                         onLogout = ::logout,
                         onLock = ::lock,
-                        onCreateProduct = ::createProduct,
+                        onCreateProduct = ::createProductDraft,
+                        products = catalogProducts,
+                        onDeactivateProduct = ::deactivateProduct,
                         importPreview = catalogImportPreview,
                         onPreviewImport = ::previewCatalogImport,
                         onCommitImport = ::commitCatalogImport,
@@ -113,7 +117,7 @@ class MainActivity : ComponentActivity() {
     private fun createOwner(username: String, displayName: String, pin: String) = lifecycleScope.launch {
         authMessage = null
         runCatching { withContext(Dispatchers.IO) { authenticationService.bootstrapOwner(username, displayName, pin.toCharArray()) } }
-            .onSuccess { authState = AuthState.SignedIn(it) }
+            .onSuccess { authState = AuthState.SignedIn(it); lifecycleScope.launch { catalogProducts = withContext(Dispatchers.IO) { catalogService.products() } } }
             .onFailure { authMessage = it.message ?: "Unable to create the owner account." }
     }
 
@@ -121,7 +125,7 @@ class MainActivity : ComponentActivity() {
         authMessage = null
         runCatching { withContext(Dispatchers.IO) { authenticationService.login(username, pin.toCharArray()) } }
             .onSuccess { result -> when (result) {
-                is LoginResult.Success -> authState = AuthState.SignedIn(result.session)
+                is LoginResult.Success -> { authState = AuthState.SignedIn(result.session); lifecycleScope.launch { catalogProducts = withContext(Dispatchers.IO) { catalogService.products() } } }
                 LoginResult.InvalidCredentials -> authMessage = "Invalid username or PIN."
                 LoginResult.Throttled -> authMessage = "Too many attempts. Please wait and try again."
                 LoginResult.DisabledAccount -> authMessage = "This account is disabled."
@@ -144,6 +148,18 @@ class MainActivity : ComponentActivity() {
         authMessage=null
         runCatching { withContext(Dispatchers.IO) { catalogService.createProduct(session.sessionId, ProductDraft(sku,name,unit="piece",sellingPrice=BigDecimal(price),taxClass=TaxClass.VATABLE,taxSource="Pending approved catalog source",taxValidFrom=LocalDate.now(),benefitEligibility=BenefitEligibility.NONE,prescriptionClass=PrescriptionClass.OTHER,reorderLevel=BigDecimal.ZERO,requiresLotExpiry=false),reason) } }.onSuccess { authMessage="Product saved." }.onFailure { authMessage=it.message?:"Unable to save product." }
     }
+    private fun createProductDraft(session: AuthenticatedSession, draft: ProductDraft, reason: String) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { catalogService.createProduct(session.sessionId, draft, reason); catalogService.products() } }
+            .onSuccess { catalogProducts = it; authMessage = "Product and opening stock saved." }
+            .onFailure { authMessage = it.message ?: "Unable to save product." }
+    }
+    private fun deactivateProduct(session: AuthenticatedSession, productId: String, reason: String) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { catalogService.deactivateProduct(session.sessionId, productId, reason); catalogService.products() } }
+            .onSuccess { catalogProducts = it; authMessage = "Product inactivated." }
+            .onFailure { authMessage = it.message ?: "Unable to inactivate product." }
+    }
     private fun previewCatalogImport(session: AuthenticatedSession, csv: String) = lifecycleScope.launch {
         authMessage = null
         runCatching { withContext(Dispatchers.IO) { catalogImporter.validateAgainstCatalog(catalogImporter.preview(csv)) } }
@@ -159,12 +175,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit, importPreview: CatalogImportPreview?, onPreviewImport: (AuthenticatedSession, String) -> Unit, onCommitImport: (AuthenticatedSession, CatalogImportPreview, String, Boolean) -> Unit) {
+private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,ProductDraft,String)->Unit, products: List<ProductEntity>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, onPreviewImport: (AuthenticatedSession, String) -> Unit, onCommitImport: (AuthenticatedSession, CatalogImportPreview, String, Boolean) -> Unit) {
     when (authState) {
         AuthState.Loading -> LoadingScreen()
         AuthState.OwnerSetup -> OwnerSetupScreen(message, onCreateOwner)
         AuthState.SignIn -> LoginScreen(message, onLogin)
-        is AuthState.SignedIn -> SignedInScreen(authState.session, message, onLogout, onLock, onCreateProduct, importPreview, onPreviewImport, onCommitImport)
+        is AuthState.SignedIn -> SignedInScreen(authState.session, message, onLogout, onLock, onCreateProduct, products, onDeactivateProduct, importPreview, onPreviewImport, onCommitImport)
     }
 }
 
@@ -213,9 +229,9 @@ private fun AuthForm(title: String, message: String?, fields: List<Pair<String, 
 }
 
 @Composable
-private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,String,String,String,String)->Unit, importPreview: CatalogImportPreview?, onPreviewImport: (AuthenticatedSession, String) -> Unit, onCommitImport: (AuthenticatedSession, CatalogImportPreview, String, Boolean) -> Unit) {
+private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onCreateProduct:(AuthenticatedSession,ProductDraft,String)->Unit, products: List<ProductEntity>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, onPreviewImport: (AuthenticatedSession, String) -> Unit, onCommitImport: (AuthenticatedSession, CatalogImportPreview, String, Boolean) -> Unit) {
     var showCatalog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    if(showCatalog) { CatalogEntryScreen(session,message,{ showCatalog=false },onCreateProduct,importPreview,onPreviewImport,onCommitImport); return }
+    if(showCatalog) { CatalogEditorScreen(session, products, message, { draft, reason -> onCreateProduct(session, draft, reason) }, { id, reason -> onDeactivateProduct(session, id, reason) }, { showCatalog = false }); return }
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Signed in")
         Text("Role: ${session.profile.role}")

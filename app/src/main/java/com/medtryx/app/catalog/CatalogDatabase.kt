@@ -29,6 +29,7 @@ data class ImportRowResultEntity(@PrimaryKey val id: String, val manifestId: Str
 @Dao interface CatalogDao {
  @Query("SELECT * FROM products WHERE sku = :sku") suspend fun productBySku(sku: String): ProductEntity?
  @Query("SELECT * FROM products WHERE id = :id") suspend fun productById(id: String): ProductEntity?
+ @Query("SELECT * FROM products ORDER BY active DESC, name COLLATE NOCASE, sku") suspend fun allProducts(): List<ProductEntity>
  @Query("SELECT * FROM product_barcodes WHERE barcode = :barcode") suspend fun barcode(barcode: String): ProductBarcodeEntity?
  @Query("SELECT * FROM product_barcodes WHERE productId = :productId ORDER BY barcode") suspend fun barcodesForProduct(productId: String): List<ProductBarcodeEntity>
  @Query("SELECT COUNT(*) FROM products") suspend fun count(): Int
