@@ -105,4 +105,7 @@ class ProtectedActionAuthorizer(
         reason = reason,
         freshSecret = freshSecret,
     )
+
+    suspend fun recordApplicationAudit(sessionId: String, action: String, entityReference: String, reason: String, oldValue: String?, newValue: String?) =
+        authenticationService.recordApplicationAudit(sessionId, action, entityReference, reason, oldValue, newValue)
 }

@@ -12,7 +12,7 @@ This roadmap turns the delivery plan in [the master specification](Medtryx_Produ
 
 ## Current position from repository evidence
 
-The repository contains a Kotlin/Compose Android compatibility scaffold, Room databases, F01 authentication/authorization, and F02 catalog/import code. F02 has a connected create/edit/inactivate UI, protected and effective-dated field changes, CSV preview and reviewed-subset commit, opening-lot ledger movements, and an additive prescription-class migration. F02 implementation and automated verification are **complete**: `:app:testDebugUnitTest` passed on 2026-09-24 with 32 tests and no failures. The next work is the ordered Phase 1 implementation of F03 and F06; the combined operational-core gate remains open until its remaining feature tests and integration gates pass.
+The repository contains a Kotlin/Compose Android compatibility scaffold, Room databases, F01 authentication/authorization, and F02 catalog/import code. F02 has a connected create/edit/inactivate UI, protected and effective-dated field changes, CSV preview and reviewed-subset commit, opening-lot ledger movements, and an additive prescription-class migration. F06 now has ledger-derived stock and lot balances, protected receiving and lot-scoped adjustments, exact SKU-specific pack conversion, signed outgoing movements, expired-lot exclusion and disposal, low-stock/expiry warnings with an explicit near-expiry horizon, cost snapshots, audit evidence, and an inventory screen with recent movements. `:app:testDebugUnitTest` passed on 2026-09-24 with 40 tests and no failures. F06's sale-deduction/concurrency integration remains with F05, component stock with F07, return/reversal integration with F09, and inventory reports with F10. F02 and the currently implementable F06 workflows are verified. The next ordered implementation is F03; add the dependent F05/F07/F09/F10 integrations as those features are implemented before closing the full F06 acceptance gate.
 
 The owner reports that the physical-device compatibility checks have been run successfully, so Phase 0 is treated as **passed by owner confirmation**. The detailed device results are not recorded in this repository, so this status is based on that confirmation rather than independently reviewed device evidence. This status update is not a fresh device or automated test run.
 
@@ -62,7 +62,7 @@ Build in this order. Work may overlap only where the dependency is an agreed dom
 - Finish catalog manual entry/edit/inactivation for all required SKU fields and protected audit changes.
 - Complete CSV preview, row-and-column errors, duplicate detection, checksum/manifest evidence, all-or-nothing import, and explicit reviewed-subset flow.
 - Make opening inventory and medicine lot/expiry data append-only inventory movements; derive on-hand from the ledger.
-- Implement receiving, adjustment, low-stock/expiry state, negative-stock block, and approved lot allocation behavior.
+- Implement receiving, adjustment, low-stock/expiry state, negative-stock block, and approved lot allocation behavior. The current service/UI covers these operations; atomic sale deduction and returns are completed with F05 and F09.
 - Keep catalog UI and import behavior aligned with F02; opening-stock imports must create F06 movements transactionally.
 
 **Dependencies:** F01 authorization. Agree the tax/benefit types needed by F02 with F03; use F06 movement contracts for opening stock and lots. F10 owns export-specific CSV safety and export audit behavior.

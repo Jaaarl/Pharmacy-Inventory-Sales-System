@@ -52,9 +52,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var authenticationService: AuthenticationService
     private lateinit var catalogService: CatalogService
     private lateinit var catalogImporter: CsvCatalogImporter
+    private lateinit var inventoryService: InventoryService
     private var catalogImportPreview by mutableStateOf<CatalogImportPreview?>(null)
     private var catalogImportCsv by mutableStateOf<String?>(null)
     private var catalogProducts by mutableStateOf<List<CatalogProductSnapshot>>(emptyList())
+    private var inventoryProducts by mutableStateOf<List<InventoryProductStatus>>(emptyList())
+    private var inventoryAlerts by mutableStateOf<List<InventoryAlert>>(emptyList())
+    private var nearExpiryDays by mutableStateOf("")
+    private var showInventory by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,6 +80,7 @@ class MainActivity : ComponentActivity() {
         authenticationService = AuthenticationService(authDatabase, PasswordHasher(), deviceId)
         catalogService = CatalogService(authDatabase, ProtectedActionAuthorizer(authenticationService), authenticationService)
         catalogImporter = CsvCatalogImporter(authDatabase, catalogService, ProtectedActionAuthorizer(authenticationService))
+        inventoryService = InventoryService(authDatabase, ProtectedActionAuthorizer(authenticationService))
 
         lifecycleScope.launch {
             launchCount = withContext(Dispatchers.IO) {
@@ -109,6 +115,17 @@ class MainActivity : ComponentActivity() {
                         importCsv = catalogImportCsv,
                         onChooseCsv = ::loadCatalogCsv,
                         onCommitImport = ::commitCatalogImport,
+                        showInventory = showInventory,
+                        inventoryProducts = inventoryProducts,
+                        inventoryAlerts = inventoryAlerts,
+                        nearExpiryDays = nearExpiryDays,
+                        onNearExpiryDaysChange = { nearExpiryDays = it.filter(Char::isDigit).take(3) },
+                        onOpenInventory = ::openInventory,
+                        onRefreshInventory = ::refreshInventory,
+                        onReceiveStock = ::receiveStock,
+                        onAdjustStock = ::adjustStock,
+                        onDisposeExpired = ::disposeExpiredStock,
+                        onCloseInventory = { showInventory = false },
                     )
                 }
             }
@@ -190,15 +207,39 @@ class MainActivity : ComponentActivity() {
             .onSuccess { catalogProducts = it; catalogImportPreview = null; catalogImportCsv = null; authMessage = "Catalog import committed." }
             .onFailure { authMessage = it.message ?: "Catalog import was not committed." }
     }
+
+    private fun inventoryCutoff(): LocalDate = nearExpiryDays.toIntOrNull()?.takeIf { it > 0 }?.let { LocalDate.now(java.time.ZoneId.of("Asia/Manila")).plusDays(it.toLong()) } ?: LocalDate.now(java.time.ZoneId.of("Asia/Manila"))
+    private fun openInventory(session: AuthenticatedSession) { showInventory = true; refreshInventory(session) }
+    private fun refreshInventory(session: AuthenticatedSession) = lifecycleScope.launch {
+        val cutoff = inventoryCutoff()
+        runCatching { withContext(Dispatchers.IO) { inventoryService.status(cutoff) to inventoryService.alerts(cutoff) } }
+            .onSuccess { (products, warnings) -> inventoryProducts = products; inventoryAlerts = warnings }
+            .onFailure { authMessage = it.message ?: "Unable to load inventory." }
+    }
+    private fun receiveStock(sessionId: String, draft: StockReceiptDraft, reason: String) = lifecycleScope.launch {
+        runCatching { withContext(Dispatchers.IO) { inventoryService.receive(sessionId, draft, reason); Unit } }
+            .onSuccess { authMessage = "Stock receipt recorded."; (authState as? AuthState.SignedIn)?.let { refreshInventory(it.session) } }
+            .onFailure { authMessage = it.message ?: "Stock receipt was not recorded." }
+    }
+    private fun adjustStock(sessionId: String, productId: String, lotId: String?, quantity: BigDecimal, reason: String) = lifecycleScope.launch {
+        runCatching { withContext(Dispatchers.IO) { inventoryService.adjust(sessionId, productId, lotId, quantity, reason); Unit } }
+            .onSuccess { authMessage = "Inventory adjustment recorded."; (authState as? AuthState.SignedIn)?.let { refreshInventory(it.session) } }
+            .onFailure { authMessage = it.message ?: "Inventory adjustment was not recorded." }
+    }
+    private fun disposeExpiredStock(sessionId: String, lotId: String, quantity: BigDecimal, reason: String) = lifecycleScope.launch {
+        runCatching { withContext(Dispatchers.IO) { inventoryService.disposeExpired(sessionId, lotId, quantity, reason); Unit } }
+            .onSuccess { authMessage = "Expired stock disposal recorded."; (authState as? AuthState.SignedIn)?.let { refreshInventory(it.session) } }
+            .onFailure { authMessage = it.message ?: "Expired stock disposal was not recorded." }
+    }
 }
 
 @Composable
-private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit) {
+private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit, showInventory: Boolean, inventoryProducts: List<InventoryProductStatus>, inventoryAlerts: List<InventoryAlert>, nearExpiryDays: String, onNearExpiryDaysChange: (String) -> Unit, onOpenInventory: (AuthenticatedSession) -> Unit, onRefreshInventory: (AuthenticatedSession) -> Unit, onReceiveStock: (String,StockReceiptDraft,String)->Unit, onAdjustStock: (String,String,String?,BigDecimal,String)->Unit, onDisposeExpired: (String,String,BigDecimal,String)->Unit, onCloseInventory: ()->Unit) {
     when (authState) {
         AuthState.Loading -> LoadingScreen()
         AuthState.OwnerSetup -> OwnerSetupScreen(message, onCreateOwner)
         AuthState.SignIn -> LoginScreen(message, onLogin)
-        is AuthState.SignedIn -> SignedInScreen(authState.session, message, onLogout, onLock, onSaveProduct, products, onDeactivateProduct, importPreview, importCsv, onChooseCsv, onCommitImport)
+        is AuthState.SignedIn -> if (showInventory) InventoryScreen(authState.session, inventoryProducts, inventoryAlerts, message, nearExpiryDays, onNearExpiryDaysChange, { onRefreshInventory(authState.session) }, onReceiveStock, onAdjustStock, onDisposeExpired, onCloseInventory) else SignedInScreen(authState.session, message, onLogout, onLock, onSaveProduct, products, onDeactivateProduct, importPreview, importCsv, onChooseCsv, onCommitImport, onOpenInventory)
     }
 }
 
@@ -247,7 +288,7 @@ private fun AuthForm(title: String, message: String?, fields: List<Pair<String, 
 }
 
 @Composable
-private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit) {
+private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit, onOpenInventory: (AuthenticatedSession)->Unit) {
     var showCatalog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     if(showCatalog) { CatalogEditorScreen(session, products, message, importPreview, importCsv, { id, expected, draft, effectiveFrom, reason, onSuccess -> onSaveProduct(session, id, expected, draft, effectiveFrom, reason, onSuccess) }, { id, reason -> onDeactivateProduct(session, id, reason) }, { uri -> onChooseCsv(session, uri) }, { csv, preview, reason, rows -> onCommitImport(session, csv, preview, reason, rows) }, { showCatalog = false }); return }
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -256,6 +297,7 @@ private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLog
         Text("F01 authentication foundation is active.")
         val catalogPermissions = listOf(Permission.PRODUCT_MANAGE, Permission.PRICE_CHANGE, Permission.TAX_CONFIGURATION_CHANGE, Permission.BENEFIT_ELIGIBILITY_CHANGE)
         if (catalogPermissions.any { PermissionPolicy.allows(session.profile, it) }) Button(onClick={showCatalog=true}) { Text("Product catalog") }
+        if (PermissionPolicy.allows(session.profile, Permission.INVENTORY_ADJUST) || PermissionPolicy.allows(session.profile, Permission.REPORTS_VIEW)) Button(onClick={onOpenInventory(session)}) { Text("Inventory") }
         Spacer(Modifier.height(16.dp))
         Button(onClick = onLock) { Text("Lock") }
         Spacer(Modifier.height(8.dp))

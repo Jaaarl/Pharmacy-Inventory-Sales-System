@@ -413,6 +413,10 @@ Required movement types:
 
 Every movement must store SKU, quantity, unit, lot/expiry when applicable, cost snapshot, sale or source reference, user, timestamp, and reason.
 
+Store movement quantities as signed base-unit values: incoming movements are positive and outgoing movements are negative. Protected receiving, adjustment, and expired-stock disposal require a reason and retain actor, timestamp, movement reference, and before/after stock evidence in the audit trail. Medicine adjustments identify a lot; lot balances cannot go negative. An expired lot is excluded from sale allocation and is reduced through an explicit `EXPIRED` movement after protected disposal. Reject receipt of already expired medicine stock. Low-stock warnings compare ledger-derived on-hand with the SKU reorder level. Near-expiry warnings use an explicitly selected store horizon; do not hard-code an undocumented warning period.
+
+When a receipt is entered in packs, convert it using only that SKU's configured units-per-pack factor and record the resulting exact base-unit quantity. Reject a missing conversion factor or any conversion that would require rounding.
+
 Rules:
 
 - Finalizing a sale deducts inventory in the same database transaction as the sale.
@@ -780,10 +784,11 @@ The tax engine must have table-driven unit tests with exact expected centavo res
 
 #### F06 — Inventory, lots, and expiry
 
-- Unit-test every movement type, base-unit conversions, on-hand derivation, low-stock state, expiry state, and earliest-expiry-first allocation.
-- Integration-test sale deduction, reversal, sellable and damaged returns, receiving, adjustments, and simultaneous attempts to sell the last unit.
-- Verify negative stock is blocked and medicine receipts require lot and expiry.
-- Pass condition: the movement ledger always reconciles to displayed on-hand stock and to finalized sales.
+- Unit-test signed movement and on-hand derivation, low-stock state, explicit near-expiry horizon, expired state/disposal, non-lot aggregate stock, and earliest-expiry-first allocation including expired-lot exclusion and equal-expiry ordering.
+- Integration-test authorized receiving, lot-scoped adjustments, wrong-SKU lot rejection, cost snapshots, movement/audit evidence, negative-stock blocks, and expired disposal.
+- F05 must integration-test sale deduction and last-unit concurrency inside atomic finalization. F09 must integration-test reversals and sellable/damaged return disposition.
+- Verify medicine receipts require a future expiry date and lot/batch.
+- Pass condition: the ledger always reconciles to displayed stock; no sale may commit without its stock movement once F05 is implemented; reversals preserve the original movement history.
 
 #### F07 — Product bundles
 
