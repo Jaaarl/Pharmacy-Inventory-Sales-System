@@ -487,7 +487,7 @@ expectedCash = openingFloat
 variance = actualCashCount - expectedCash
 ```
 
-QR sales do not enter expected cash. The cashier enters the physical cash count, optionally by denomination. Require notes for a non-zero variance and supervisor approval above a configurable threshold.
+QR sales do not enter expected cash. The cashier enters the physical cash count, optionally by denomination. Require notes for a non-zero variance and supervisor approval above a configurable threshold. Until an authorized threshold is configured, require separate supervisor approval for every non-zero variance. The amount remains an open configuration decision in Section 22.2.
 
 The turnover report must include:
 
@@ -505,6 +505,8 @@ The turnover report must include:
 - cashier and receiving supervisor acknowledgements.
 
 Closed shifts are immutable. Corrections use adjustment records.
+
+Implementation boundary: F08 records cash refunds against a linked reversal reference; F09 must connect approved void/return events to shift turnover, and F10 owns the report/export surface. These dependent integrations remain open until those features are implemented.
 
 ---
 

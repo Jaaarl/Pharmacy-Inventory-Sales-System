@@ -16,6 +16,7 @@ import com.medtryx.app.catalog.ProductEntity
 import com.medtryx.app.financial.CustomerBenefit
 import com.medtryx.app.financial.Money
 import com.medtryx.app.financial.TaxResult
+import com.medtryx.app.shifts.CashierShiftEntity
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -26,8 +27,11 @@ enum class BenefitIdType { SENIOR_CITIZEN_ID, PWD_ID }
 
 @Entity(
     tableName = "sales",
-    indices = [Index(value = ["humanTransactionId"], unique = true), Index(value = ["idempotencyKey"], unique = true), Index("createdAtUtcMillis"), Index("cashierUserId")],
-    foreignKeys = [ForeignKey(UserEntity::class, ["id"], ["cashierUserId"], onDelete = ForeignKey.RESTRICT)],
+    indices = [Index(value = ["humanTransactionId"], unique = true), Index(value = ["idempotencyKey"], unique = true), Index("createdAtUtcMillis"), Index("cashierUserId"), Index("shiftId")],
+    foreignKeys = [
+        ForeignKey(UserEntity::class, ["id"], ["cashierUserId"], onDelete = ForeignKey.RESTRICT),
+        ForeignKey(CashierShiftEntity::class, ["id"], ["shiftId"], onDelete = ForeignKey.RESTRICT),
+    ],
 )
 data class SaleEntity(
     @PrimaryKey val id: String,
@@ -36,6 +40,8 @@ data class SaleEntity(
     val status: SaleStatus,
     val cashierUserId: String,
     val cashierDisplayName: String,
+    /** Null only on pre-F08 historical rows; new finalized sales always require a shift. */
+    val shiftId: String?,
     val createdAtUtcMillis: Long,
     val businessDateManila: String,
     val customerBenefit: CustomerBenefit?,

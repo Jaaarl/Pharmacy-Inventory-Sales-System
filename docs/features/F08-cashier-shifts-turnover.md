@@ -1,7 +1,7 @@
 # F08 — Cashier Shifts and Cash Turnover
 
 **Phase:** 1 — Offline core  
-**Status:** MVP specification  
+**Status:** Implemented in app; JVM and physical-device gates tracked in the roadmap
 **Master reference:** [Section 12](../Medtryx_Product_and_Technical_Specification.md#12-feature-f08--cashier-shifts-and-cash-turnover)
 
 ## Purpose
@@ -55,6 +55,15 @@ Include cashier/shift IDs, open/close times, opening float, sales totals, cash, 
 ## Open Configuration
 
 - The variance amount requiring supervisor approval remains undecided.
+- Until configured by an authorized user, every non-zero variance requires a different supervisor's approval. Threshold changes require fresh authentication and an audit record.
+
+## Implementation Notes (2026-09-24)
+
+- Room schema 7 adds shifts, active-shift claims, append-only cash movements, versioned variance policies, and post-close adjustments. Migration 6→7 leaves historical sales with a null shift assignment.
+- New sales require the active cashier/device/store shift and snapshot its ID. Checkout cannot open or finalize without that shift.
+- Shift opening, cash-in/out, cash/QR totals, cash refunds, denomination reconciliation, exact expected-cash calculation, threshold review, fresh-PIN supervisor acknowledgement, and immutable close are implemented in the local UI and application service.
+- Protected threshold changes and post-close adjustments require fresh authentication; authorizations and state changes are audited.
+- F09 still needs to connect real approved void/return records to turnover. F10 still owns formal reports and exports. MatePad lifecycle verification remains a release gate.
 
 ## Dependencies
 

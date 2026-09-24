@@ -43,6 +43,7 @@ import com.medtryx.app.auth.PermissionPolicy
 import com.medtryx.app.catalog.*
 import com.medtryx.app.financial.RoundingRule
 import com.medtryx.app.sales.*
+import com.medtryx.app.shifts.*
 import com.medtryx.app.security.AndroidKeystoreSensitiveDataProtector
 import java.io.ByteArrayOutputStream
 import java.math.BigDecimal
@@ -58,6 +59,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var catalogImporter: CsvCatalogImporter
     private lateinit var inventoryService: InventoryService
     private lateinit var saleFinalizationService: SaleFinalizationService
+    private lateinit var shiftService: ShiftService
     private var catalogImportPreview by mutableStateOf<CatalogImportPreview?>(null)
     private var catalogImportCsv by mutableStateOf<String?>(null)
     private var catalogProducts by mutableStateOf<List<CatalogProductSnapshot>>(emptyList())
@@ -70,6 +72,11 @@ class MainActivity : ComponentActivity() {
     private var roundingRule by mutableStateOf<RoundingRule?>(null)
     private var checkoutPreview by mutableStateOf<CheckoutPreview?>(null)
     private var saleSummary by mutableStateOf<SaleSummary?>(null)
+    private var showShift by mutableStateOf(false)
+    private var shiftDashboard by mutableStateOf(ShiftDashboard(null, 0, 0, 0, 0, 0, 0, 0, null, emptyList(), emptyList()))
+    private var recentShifts by mutableStateOf<List<CashierShiftEntity>>(emptyList())
+    private var pendingShiftClosures by mutableStateOf<List<CashierShiftEntity>>(emptyList())
+    private var varianceThresholdCentavos by mutableStateOf<Long?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,7 +89,7 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             MedtryxDatabase::class.java,
             "medtryx.db",
-        ).addMigrations(MedtryxDatabase.MIGRATION_1_2, MedtryxDatabase.MIGRATION_2_3, MedtryxDatabase.MIGRATION_3_4, MedtryxDatabase.MIGRATION_4_5, MedtryxDatabase.MIGRATION_5_6)
+        ).addMigrations(MedtryxDatabase.MIGRATION_1_2, MedtryxDatabase.MIGRATION_2_3, MedtryxDatabase.MIGRATION_3_4, MedtryxDatabase.MIGRATION_4_5, MedtryxDatabase.MIGRATION_5_6, MedtryxDatabase.MIGRATION_6_7)
             .addCallback(MedtryxDatabase.IMMUTABILITY_CALLBACK).build()
         val preferences = getSharedPreferences("medtryx_device", MODE_PRIVATE)
         val deviceId = preferences.getString("id", null) ?: java.util.UUID.randomUUID().toString().also {
@@ -92,6 +99,7 @@ class MainActivity : ComponentActivity() {
         catalogService = CatalogService(authDatabase, ProtectedActionAuthorizer(authenticationService), authenticationService)
         catalogImporter = CsvCatalogImporter(authDatabase, catalogService, ProtectedActionAuthorizer(authenticationService))
         inventoryService = InventoryService(authDatabase, ProtectedActionAuthorizer(authenticationService))
+        shiftService = ShiftService(authDatabase, authenticationService, ProtectedActionAuthorizer(authenticationService))
         saleFinalizationService = SaleFinalizationService(authDatabase, authenticationService, ProtectedActionAuthorizer(authenticationService), inventoryService, AndroidKeystoreSensitiveDataProtector())
 
         lifecycleScope.launch {
@@ -138,6 +146,21 @@ class MainActivity : ComponentActivity() {
                         onAdjustStock = ::adjustStock,
                         onDisposeExpired = ::disposeExpiredStock,
                         onCloseInventory = { showInventory = false },
+                        showShift = showShift,
+                        shiftDashboard = shiftDashboard,
+                        recentShifts = recentShifts,
+                        pendingShiftClosures = pendingShiftClosures,
+                        varianceThresholdCentavos = varianceThresholdCentavos,
+                        onOpenShift = ::openShiftScreen,
+                        onShiftOpen = ::openShift,
+                        onShiftCashInOut = ::shiftCashInOut,
+                        onShiftClose = ::closeShift,
+                        onShiftSelect = ::selectShift,
+                        onShiftVarianceDecision = ::decideShiftVariance,
+                        onShiftThreshold = ::setShiftThreshold,
+                        onShiftAdjustment = ::addShiftAdjustment,
+                        onShiftRefresh = ::refreshShiftScreen,
+                        onShiftScreenClose = { showShift = false },
                         showCheckout = showCheckout,
                         checkoutPreview = checkoutPreview,
                         saleSummary = saleSummary,
@@ -257,9 +280,60 @@ class MainActivity : ComponentActivity() {
             .onFailure { authMessage = it.message ?: "Expired stock disposal was not recorded." }
     }
 
+    private fun openShiftScreen(session: AuthenticatedSession) {
+        showShift = true; showInventory = false; showCheckout = false; showRoundingApproval = false
+        refreshShiftScreen(session)
+    }
+
+    private fun refreshShiftScreen(session: AuthenticatedSession) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) {
+            val current = shiftService.currentShift(session.sessionId)
+            val recent = shiftService.recentShifts(session.sessionId)
+            val pending = if (PermissionPolicy.allows(session.profile, Permission.SHIFT_VARIANCE_APPROVE)) shiftService.pendingClosures(session.sessionId) else emptyList()
+            Triple(current, recent, pending) to shiftService.latestVarianceThreshold()
+        } }.onSuccess { (data, threshold) ->
+            shiftDashboard = data.first; recentShifts = data.second; pendingShiftClosures = data.third
+            varianceThresholdCentavos = threshold
+        }.onFailure { authMessage = it.message ?: "Unable to load cashier shifts." }
+    }
+
+    private fun openShift(session: AuthenticatedSession, openingFloat: Long) = shiftAction(session) {
+        shiftDashboard = shiftService.openShift(session.sessionId, openingFloat)
+    }
+    private fun shiftCashInOut(session: AuthenticatedSession, amount: Long, type: ShiftCashMovementType, reason: String) = shiftAction(session) {
+        shiftDashboard = shiftService.recordCashInOut(session.sessionId, amount, type, reason)
+    }
+    private fun closeShift(session: AuthenticatedSession, actual: Long, denominations: Map<Long, Long>?, note: String?) = shiftAction(session) {
+        shiftDashboard = shiftService.requestClose(session.sessionId, actual, denominations, note).dashboard
+    }
+    private fun selectShift(session: AuthenticatedSession, shiftId: String) = shiftAction(session) {
+        shiftDashboard = shiftService.dashboard(session.sessionId, shiftId)
+    }
+    private fun decideShiftVariance(session: AuthenticatedSession, shiftId: String, approve: Boolean, reason: String, pin: String) = shiftAction(session) {
+        shiftService.decideVariance(session.sessionId, shiftId, approve, reason, pin.toCharArray())
+        shiftDashboard = shiftService.dashboard(session.sessionId, shiftId)
+    }
+    private fun setShiftThreshold(session: AuthenticatedSession, amount: Long, reason: String, pin: String) = shiftAction(session) {
+        varianceThresholdCentavos = shiftService.configureVarianceThreshold(session.sessionId, amount, reason, pin.toCharArray()).thresholdCentavos
+    }
+    private fun addShiftAdjustment(session: AuthenticatedSession, shiftId: String, amount: Long, reason: String, pin: String) = shiftAction(session) {
+        shiftService.addAdjustment(session.sessionId, shiftId, amount, reason, pin.toCharArray())
+        shiftDashboard = shiftService.dashboard(session.sessionId, shiftId)
+    }
+    private fun shiftAction(session: AuthenticatedSession, action: suspend () -> Unit) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { action() } }
+            .onSuccess { refreshShiftScreen(session) }
+            .onFailure { authMessage = it.message ?: "Shift action failed." }
+    }
+
     private fun openCheckout(session: AuthenticatedSession) = lifecycleScope.launch {
         authMessage = null; checkoutPreview = null; saleSummary = null
-        runCatching { withContext(Dispatchers.IO) { catalogService.productSnapshots() to saleFinalizationService.currentRoundingRule() } }
+        runCatching { withContext(Dispatchers.IO) {
+            check(shiftService.currentShift(session.sessionId).shift?.status == ShiftStatus.OPEN) { "Open your cashier shift before starting checkout." }
+            catalogService.productSnapshots() to saleFinalizationService.currentRoundingRule()
+        } }
             .onSuccess { (products, rounding) -> catalogProducts = products; roundingRule = rounding; showInventory = false; showRoundingApproval = false; showCheckout = true }
             .onFailure { authMessage = it.message ?: "Unable to open checkout." }
     }
@@ -305,7 +379,15 @@ private fun MedtryxApp(
     nearExpiryDays: String, onNearExpiryDaysChange: (String) -> Unit, onOpenInventory: (AuthenticatedSession) -> Unit,
     onRefreshInventory: (AuthenticatedSession) -> Unit, onReceiveStock: (String,StockReceiptDraft,String)->Unit,
     onAdjustStock: (String,String,String?,BigDecimal,String)->Unit, onDisposeExpired: (String,String,BigDecimal,String)->Unit,
-    onCloseInventory: ()->Unit, showCheckout: Boolean, checkoutPreview: CheckoutPreview?, saleSummary: SaleSummary?,
+    onCloseInventory: ()->Unit, showShift: Boolean, shiftDashboard: ShiftDashboard,
+    recentShifts: List<CashierShiftEntity>, pendingShiftClosures: List<CashierShiftEntity>, varianceThresholdCentavos: Long?,
+    onOpenShift: (AuthenticatedSession)->Unit, onShiftOpen: (AuthenticatedSession,Long)->Unit,
+    onShiftCashInOut: (AuthenticatedSession,Long,ShiftCashMovementType,String)->Unit,
+    onShiftClose: (AuthenticatedSession,Long,Map<Long,Long>?,String?)->Unit,
+    onShiftSelect: (AuthenticatedSession,String)->Unit, onShiftVarianceDecision: (AuthenticatedSession,String,Boolean,String,String)->Unit,
+    onShiftThreshold: (AuthenticatedSession,Long,String,String)->Unit, onShiftAdjustment: (AuthenticatedSession,String,Long,String,String)->Unit,
+    onShiftRefresh: (AuthenticatedSession)->Unit, onShiftScreenClose: ()->Unit,
+    showCheckout: Boolean, checkoutPreview: CheckoutPreview?, saleSummary: SaleSummary?,
     roundingRule: RoundingRule?, showRoundingApproval: Boolean, onOpenCheckout: (AuthenticatedSession) -> Unit,
     onPreviewCheckout: (AuthenticatedSession, CheckoutDraft) -> Unit, onFinalizeCheckout: (AuthenticatedSession, CheckoutDraft) -> Unit,
     onCloseCheckout: () -> Unit, onNewSale: () -> Unit, onOpenRoundingApproval: (AuthenticatedSession) -> Unit,
@@ -317,6 +399,17 @@ private fun MedtryxApp(
         AuthState.SignIn -> LoginScreen(message, onLogin)
         is AuthState.SignedIn -> when {
             showInventory -> InventoryScreen(authState.session, inventoryProducts, inventoryAlerts, message, nearExpiryDays, onNearExpiryDaysChange, { onRefreshInventory(authState.session) }, onReceiveStock, onAdjustStock, onDisposeExpired, onCloseInventory)
+            showShift -> CashierShiftScreen(
+                authState.session, shiftDashboard, recentShifts, pendingShiftClosures, varianceThresholdCentavos, message,
+                onOpen = { onShiftOpen(authState.session, it) },
+                onCashInOut = { amount, type, reason -> onShiftCashInOut(authState.session, amount, type, reason) },
+                onCloseShift = { actual, denominations, note -> onShiftClose(authState.session, actual, denominations, note) },
+                onSelectShift = { onShiftSelect(authState.session, it) },
+                onDecideVariance = { id, approve, reason, pin -> onShiftVarianceDecision(authState.session, id, approve, reason, pin) },
+                onSetVarianceThreshold = { amount, reason, pin -> onShiftThreshold(authState.session, amount, reason, pin) },
+                onAdjustment = { id, amount, reason, pin -> onShiftAdjustment(authState.session, id, amount, reason, pin) },
+                onRefresh = { onShiftRefresh(authState.session) }, onCloseScreen = onShiftScreenClose,
+            )
             showCheckout -> CheckoutScreen(
                 session = authState.session, products = products,
                 roundingDescription = roundingRule?.let { "${it.mode} v${it.version} · approved ${it.approvedBy}" },
@@ -331,7 +424,7 @@ private fun MedtryxApp(
             else -> SignedInScreen(
                 authState.session, message, onLogout, onLock, onSaveProduct, products, onDeactivateProduct,
                 importPreview, importCsv, onChooseCsv, onCommitImport, onOpenInventory,
-                onOpenCheckout, roundingRule, onOpenRoundingApproval,
+                onOpenCheckout, roundingRule, onOpenRoundingApproval, onOpenShift,
             )
         }
     }
@@ -382,13 +475,14 @@ private fun AuthForm(title: String, message: String?, fields: List<Pair<String, 
 }
 
 @Composable
-private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit, onOpenInventory: (AuthenticatedSession)->Unit, onOpenCheckout: (AuthenticatedSession)->Unit, roundingRule: RoundingRule?, onOpenRoundingApproval: (AuthenticatedSession)->Unit) {
+private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit, onOpenInventory: (AuthenticatedSession)->Unit, onOpenCheckout: (AuthenticatedSession)->Unit, roundingRule: RoundingRule?, onOpenRoundingApproval: (AuthenticatedSession)->Unit, onOpenShift: (AuthenticatedSession)->Unit) {
     var showCatalog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     if(showCatalog) { CatalogEditorScreen(session, products, message, importPreview, importCsv, { id, expected, draft, effectiveFrom, reason, onSuccess -> onSaveProduct(session, id, expected, draft, effectiveFrom, reason, onSuccess) }, { id, reason -> onDeactivateProduct(session, id, reason) }, { uri -> onChooseCsv(session, uri) }, { csv, preview, reason, rows -> onCommitImport(session, csv, preview, reason, rows) }, { showCatalog = false }); return }
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Signed in")
         Text("Role: ${session.profile.role}")
         Text("F01 authentication foundation is active.")
+        if (PermissionPolicy.allows(session.profile, Permission.SHIFT_OPEN_CLOSE_OWN) || PermissionPolicy.allows(session.profile, Permission.SHIFT_VIEW)) Button(onClick = { onOpenShift(session) }) { Text("Cashier shift and turnover") }
         if (PermissionPolicy.allows(session.profile, Permission.CHECKOUT_CREATE)) Button(onClick = { onOpenCheckout(session) }) { Text("Checkout") }
         if (PermissionPolicy.allows(session.profile, Permission.ROUNDING_CONFIGURATION_CHANGE)) {
             Button(onClick = { onOpenRoundingApproval(session) }) { Text(if (roundingRule == null) "Approve store rounding rule" else "Store rounding rule: ${roundingRule.mode} v${roundingRule.version}") }

@@ -108,6 +108,10 @@ class SaleFinalizationService(
             }
             val rounding = database.salesDao().latestRoundingRule()?.toDomain()
                 ?: error("A protected user must approve the store rounding rule before checkout.")
+            val session = requireNotNull(database.authDao().session(sessionId)) { "Session is no longer active." }
+            val activeShift = requireNotNull(database.shiftDao().openShift(
+                com.medtryx.app.shifts.ShiftService.STORE_ID, session.deviceId, active.userId,
+            )) { "Open your cashier shift before finalizing a sale." }
             val lines = calculateLines(draft, businessDate, rounding)
             failureInjector(FinalizationCheckpoint.AFTER_VALIDATION)
             val transactionId = nextTransactionId(businessDate)
@@ -124,6 +128,7 @@ class SaleFinalizationService(
                 status = SaleStatus.FINALIZED,
                 cashierUserId = active.userId,
                 cashierDisplayName = user.displayName,
+                shiftId = activeShift.id,
                 createdAtUtcMillis = createdAt.toEpochMilli(),
                 businessDateManila = businessDate.toString(),
                 customerBenefit = draft.customerBenefit,

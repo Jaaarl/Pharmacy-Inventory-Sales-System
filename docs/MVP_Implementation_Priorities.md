@@ -16,6 +16,8 @@ The repository contains a Kotlin/Compose Android compatibility scaffold, Room da
 
 The owner reports that the physical-device compatibility checks have been run successfully, so Phase 0 is treated as **passed by owner confirmation**. The detailed device results are not recorded in this repository, so this status is based on that confirmation rather than independently reviewed device evidence. This status update is not a fresh device or automated test run.
 
+**F08 update (2026-09-24):** F08 is now implemented locally. Room schema 7 adds shift ownership to new sales and preserves pre-F08 sales without a shift; the cashier screen and application service cover opening, cash movements, cash/QR turnover, cash refunds linked for the future F09 flow, close counts, variance review, threshold policy, and immutable adjustments. With Android Studio JDK and Java 21 test workers, `:app:testDebugUnitTest` passed with 67 tests and no failures, including F08 migration, exact cash reconciliation, threshold boundary, authorization, interrupted-close rollback, and immutability coverage. Physical MatePad workflow/restart checks remain open. F09 must connect actual void/return records to turnover, and F10 must add formal report/export coverage; those are downstream integrations, not claimed as complete here.
+
 ## Phase map
 
 | Phase | Outcome | Feature coverage | Gate |
@@ -96,12 +98,13 @@ Build in this order. Work may overlap only where the dependency is an agreed dom
 
 ### 1E. F08 — Cashier shifts and turnover
 
-- Implement one-open-shift rules, opening float, cash movements, cash/QR separation, denomination count, variance reasons, and approval threshold configuration.
-- Keep closed shifts immutable; corrections use adjustment records.
+- **Implemented:** Room schema 7 and additive migration; one active shift per cashier/device/store; opening float; required shift context for every new sale; cash-in/out and cash-refund movements; cash/QR separation; denomination count; variance notes and approval; versioned threshold configuration; fresh-auth supervisor decisions; immutable closed shifts and append-only adjustments.
+- **JVM verified:** 67-test full suite passes, including F08 formula reconciliation, configured-threshold boundary, audit-failure rollback, authorization, and the v6→v7 migration.
+- **Still open:** actual MatePad checkout/turnover and lifecycle checks; F09 reversal linkage; F10 formal turnover reports/exports. The Section 22.2 threshold amount remains undecided; until configured, every non-zero variance needs supervisor approval.
 
 **Dependency:** F01 identities and finalized F05 settlement records.
 
-**Gate:** F08 tests pass; the documented expected-cash formula reconciles exactly; QR never changes expected physical cash; authorization and closed-shift rules pass.
+**Gate:** JVM F08 checks pass and the documented expected-cash formula, QR exclusion, authorization, interrupted-close rollback, and closed-shift rules are verified. The Phase 1 gate remains open until the physical MatePad smoke checks pass. F09 reversal linkage and F10 formal turnover reports/exports are later integrations.
 
 ### Phase 1 exit gate
 

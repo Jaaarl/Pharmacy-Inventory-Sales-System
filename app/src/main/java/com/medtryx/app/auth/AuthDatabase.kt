@@ -16,6 +16,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.medtryx.app.catalog.*
 import com.medtryx.app.sales.*
+import com.medtryx.app.shifts.*
 
 @Entity(tableName = "users", indices = [Index(value = ["username"], unique = true)])
 data class UserEntity(
@@ -139,16 +140,17 @@ interface AuthDao {
 }
 
 @Database(
-    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, InventoryMovementEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class, SaleEntity::class, SaleLineEntity::class, SaleLineAllocationEntity::class, TransactionSequenceEntity::class, RoundingRuleApprovalEntity::class],
-    version = 6,
+    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, InventoryMovementEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class, SaleEntity::class, SaleLineEntity::class, SaleLineAllocationEntity::class, TransactionSequenceEntity::class, RoundingRuleApprovalEntity::class, CashierShiftEntity::class, ActiveShiftClaimEntity::class, ShiftCashMovementEntity::class, ShiftVariancePolicyEntity::class, ShiftAdjustmentEntity::class],
+    version = 7,
     exportSchema = true,
 )
-@TypeConverters(AuthConverters::class, SalesConverters::class)
+@TypeConverters(AuthConverters::class, SalesConverters::class, ShiftConverters::class)
 abstract class MedtryxDatabase : RoomDatabase() {
     abstract fun authDao(): AuthDao
     abstract fun catalogDao(): CatalogDao
     abstract fun inventoryDao(): InventoryDao
     abstract fun salesDao(): SalesDao
+    abstract fun shiftDao(): ShiftDao
 
     companion object {
         /** Enforce append-only finalized records on fresh and migrated databases. */
@@ -168,6 +170,14 @@ abstract class MedtryxDatabase : RoomDatabase() {
             db.execSQL("CREATE TRIGGER IF NOT EXISTS inventory_movements_no_delete BEFORE DELETE ON inventory_movements BEGIN SELECT RAISE(ABORT, 'Inventory movements are append-only'); END")
             db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_update BEFORE UPDATE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
             db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_delete BEFORE DELETE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_closed_no_update BEFORE UPDATE ON cashier_shifts WHEN OLD.status = 'CLOSED' BEGIN SELECT RAISE(ABORT, 'Closed shifts are immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_closed_no_delete BEFORE DELETE ON cashier_shifts BEGIN SELECT RAISE(ABORT, 'Shift history is immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_movements_no_update BEFORE UPDATE ON shift_cash_movements BEGIN SELECT RAISE(ABORT, 'Shift cash movements are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_movements_no_delete BEFORE DELETE ON shift_cash_movements BEGIN SELECT RAISE(ABORT, 'Shift cash movements are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_adjustments_no_update BEFORE UPDATE ON shift_adjustments BEGIN SELECT RAISE(ABORT, 'Shift adjustments are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_adjustments_no_delete BEFORE DELETE ON shift_adjustments BEGIN SELECT RAISE(ABORT, 'Shift adjustments are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_policies_no_update BEFORE UPDATE ON shift_variance_policies BEGIN SELECT RAISE(ABORT, 'Shift variance policies are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_policies_no_delete BEFORE DELETE ON shift_variance_policies BEGIN SELECT RAISE(ABORT, 'Shift variance policies are append-only'); END")
         }
 
         /** Additive migration: audit history remains append-only. */
@@ -230,6 +240,39 @@ abstract class MedtryxDatabase : RoomDatabase() {
                 db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_allocations_no_delete BEFORE DELETE ON sale_line_allocations BEGIN SELECT RAISE(ABORT, 'Finalized sale allocations are immutable'); END")
                 db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_update BEFORE UPDATE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
                 db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_delete BEFORE DELETE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
+            }
+        }
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS cashier_shifts (id TEXT NOT NULL PRIMARY KEY, storeId TEXT NOT NULL, deviceId TEXT NOT NULL, cashierUserId TEXT NOT NULL, cashierDisplayName TEXT NOT NULL, status TEXT NOT NULL, openedAtUtcMillis INTEGER NOT NULL, openingFloatCentavos INTEGER NOT NULL, closeRequestedAtUtcMillis INTEGER, actualCashCentavos INTEGER, expectedCashCentavos INTEGER, varianceCentavos INTEGER, denominationCounts TEXT, varianceNote TEXT, closedAtUtcMillis INTEGER, supervisorUserId TEXT, supervisorAcknowledgedAtUtcMillis INTEGER, FOREIGN KEY(cashierUserId) REFERENCES users(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cashier_shifts_cashierUserId ON cashier_shifts(cashierUserId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cashier_shifts_deviceId ON cashier_shifts(deviceId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cashier_shifts_storeId ON cashier_shifts(storeId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cashier_shifts_openedAtUtcMillis ON cashier_shifts(openedAtUtcMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cashier_shifts_status ON cashier_shifts(status)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS active_shift_claims (storeId TEXT NOT NULL, deviceId TEXT NOT NULL, cashierUserId TEXT NOT NULL, shiftId TEXT NOT NULL, PRIMARY KEY(storeId, deviceId, cashierUserId), FOREIGN KEY(shiftId) REFERENCES cashier_shifts(id) ON DELETE CASCADE)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_active_shift_claims_shiftId ON active_shift_claims(shiftId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS shift_cash_movements (id TEXT NOT NULL PRIMARY KEY, shiftId TEXT NOT NULL, type TEXT NOT NULL, amountCentavos INTEGER NOT NULL, occurredAtUtcMillis INTEGER NOT NULL, recordedByUserId TEXT NOT NULL, reason TEXT NOT NULL, sourceReference TEXT, FOREIGN KEY(shiftId) REFERENCES cashier_shifts(id) ON DELETE RESTRICT, FOREIGN KEY(recordedByUserId) REFERENCES users(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_cash_movements_shiftId ON shift_cash_movements(shiftId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_cash_movements_occurredAtUtcMillis ON shift_cash_movements(occurredAtUtcMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_cash_movements_recordedByUserId ON shift_cash_movements(recordedByUserId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS shift_variance_policies (id TEXT NOT NULL PRIMARY KEY, version TEXT NOT NULL, thresholdCentavos INTEGER NOT NULL, approvedByUserId TEXT NOT NULL, approvedAtUtcMillis INTEGER NOT NULL, reason TEXT NOT NULL, FOREIGN KEY(approvedByUserId) REFERENCES users(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_variance_policies_approvedAtUtcMillis ON shift_variance_policies(approvedAtUtcMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_variance_policies_approvedByUserId ON shift_variance_policies(approvedByUserId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS shift_adjustments (id TEXT NOT NULL PRIMARY KEY, shiftId TEXT NOT NULL, amountCentavos INTEGER NOT NULL, createdAtUtcMillis INTEGER NOT NULL, createdByUserId TEXT NOT NULL, reason TEXT NOT NULL, FOREIGN KEY(shiftId) REFERENCES cashier_shifts(id) ON DELETE RESTRICT, FOREIGN KEY(createdByUserId) REFERENCES users(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_adjustments_shiftId ON shift_adjustments(shiftId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_adjustments_createdAtUtcMillis ON shift_adjustments(createdAtUtcMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_shift_adjustments_createdByUserId ON shift_adjustments(createdByUserId)")
+                db.execSQL("ALTER TABLE sales ADD COLUMN shiftId TEXT REFERENCES cashier_shifts(id) ON DELETE RESTRICT")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sales_shiftId ON sales(shiftId)")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_closed_no_update BEFORE UPDATE ON cashier_shifts WHEN OLD.status = 'CLOSED' BEGIN SELECT RAISE(ABORT, 'Closed shifts are immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_closed_no_delete BEFORE DELETE ON cashier_shifts BEGIN SELECT RAISE(ABORT, 'Shift history is immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_movements_no_update BEFORE UPDATE ON shift_cash_movements BEGIN SELECT RAISE(ABORT, 'Shift cash movements are append-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_movements_no_delete BEFORE DELETE ON shift_cash_movements BEGIN SELECT RAISE(ABORT, 'Shift cash movements are append-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_adjustments_no_update BEFORE UPDATE ON shift_adjustments BEGIN SELECT RAISE(ABORT, 'Shift adjustments are append-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_adjustments_no_delete BEFORE DELETE ON shift_adjustments BEGIN SELECT RAISE(ABORT, 'Shift adjustments are append-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_policies_no_update BEFORE UPDATE ON shift_variance_policies BEGIN SELECT RAISE(ABORT, 'Shift variance policies are append-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS shift_policies_no_delete BEFORE DELETE ON shift_variance_policies BEGIN SELECT RAISE(ABORT, 'Shift variance policies are append-only'); END")
             }
         }
     }

@@ -7,6 +7,7 @@ import com.medtryx.app.auth.*
 import com.medtryx.app.catalog.*
 import com.medtryx.app.financial.CustomerBenefit
 import com.medtryx.app.security.SensitiveDataProtector
+import com.medtryx.app.shifts.ShiftService
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -47,6 +48,7 @@ class SaleFinalizationServiceTest {
 
     private suspend fun setupService(failure: (FinalizationCheckpoint) -> Unit = {}) {
         owner = auth.bootstrapOwner("owner", "Owner", "1234".toCharArray())
+        ShiftService(db, auth, ProtectedActionAuthorizer(auth)).openShift(owner.sessionId, 0)
         service = SaleFinalizationService(
             db, auth, ProtectedActionAuthorizer(auth), inventory,
             object : SensitiveDataProtector { override fun protect(plainText: String) = "enc:test:${plainText.reversed()}" },
@@ -159,6 +161,7 @@ class SaleFinalizationServiceTest {
         setupService()
         val cashierId = auth.createUser(owner.sessionId, "cashier", "Cashier", Role.CASHIER, "5678".toCharArray(), reason = "checkout access")
         val cashier = (auth.login("cashier", "5678".toCharArray()) as LoginResult.Success).session
+        ShiftService(db, auth, ProtectedActionAuthorizer(auth)).openShift(cashier.sessionId, 0)
         try { service.approveRoundingRule(cashier.sessionId, RoundingMode.DOWN, "unauthorized change"); fail("cashier cannot approve rounding") } catch (_: AccessDeniedException) { }
         val id = createProduct("CASHIER-1", eligible = false)
         val sale = service.finalize(cashier.sessionId, CheckoutDraft(UUID.randomUUID().toString(), listOf(CheckoutLineDraft(id, BigDecimal.ONE)), settlementMethod = SettlementMethod.CASH))
