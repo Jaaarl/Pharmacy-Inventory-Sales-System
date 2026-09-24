@@ -27,18 +27,24 @@ object ProductValidator {
     private val barcodePattern = Regex("[^\\p{Cntrl}]{1,128}")
     fun validate(draft: ProductDraft): List<ValidationError> = buildList {
         if (!skuPattern.matches(draft.sku.trim().uppercase(Locale.ROOT))) add(ValidationError("sku", "Use 2-64 uppercase letters, numbers, dots, dashes, or underscores."))
-        if (draft.name.isBlank()) add(ValidationError("name", "Product name is required."))
+        if (draft.name.isBlank() || draft.name.length > 200 || draft.name.any(Char::isISOControl)) add(ValidationError("name", "Product name is required and must be at most 200 printable characters."))
+        listOf("genericName" to draft.genericName, "brand" to draft.brand, "strength" to draft.strength, "dosageForm" to draft.dosageForm).forEach { (field, value) ->
+            if (value != null && (value.length > 200 || value.any(Char::isISOControl))) add(ValidationError(field, "Use at most 200 printable characters."))
+        }
         if (draft.unit.isBlank() || draft.unit.trim().length > 40 || draft.unit.any(Char::isISOControl)) add(ValidationError("unit", "Unit must be 1-40 printable characters."))
-        if (draft.sellingPrice.signum() < 0 || draft.sellingPrice.scale() > 2) add(ValidationError("sellingPrice", "Selling price must be a non-negative exact amount with at most two decimals."))
-        if (draft.unitCost != null && (draft.unitCost.signum() < 0 || draft.unitCost.scale() > 2)) add(ValidationError("unitCost", "Cost must be a non-negative exact amount with at most two decimals."))
+        if (!validMoney(draft.sellingPrice)) add(ValidationError("sellingPrice", "Selling price must be a non-negative centavo amount that fits the supported range."))
+        if (draft.unitCost != null && !validMoney(draft.unitCost)) add(ValidationError("unitCost", "Cost must be a non-negative centavo amount that fits the supported range."))
         if (draft.packSize != null && (draft.packSize <= BigDecimal.ZERO || draft.packSize.scale() > MAX_QUANTITY_SCALE)) add(ValidationError("packSize", "Pack conversion must be greater than zero with at most four decimals."))
         if (draft.reorderLevel.signum() < 0 || draft.reorderLevel.scale() > MAX_QUANTITY_SCALE) add(ValidationError("reorderLevel", "Reorder level must be non-negative with at most four decimals."))
-        if (draft.taxSource.isBlank()) add(ValidationError("taxSource", "Tax authority/source is required."))
+        if (draft.taxSource.isBlank() || draft.taxSource.length > 500 || draft.taxSource.any(Char::isISOControl)) add(ValidationError("taxSource", "Tax authority/source is required and must be at most 500 printable characters."))
         if (draft.taxValidTo != null && draft.taxValidTo.isBefore(draft.taxValidFrom)) add(ValidationError("taxValidTo", "End date cannot precede start date."))
         if (draft.barcodes.any { !barcodePattern.matches(it.trim()) }) add(ValidationError("barcodes", "Barcode must be 1-128 printable characters."))
+        if (draft.openingLots.groupingBy { it.lotNumber.trim() to it.expiryDate }.eachCount().any { it.value > 1 }) add(ValidationError("openingLots", "A lot/batch and expiry combination may appear only once."))
         draft.openingLots.forEachIndexed { index, lot ->
             if (lot.quantity <= BigDecimal.ZERO || lot.quantity.scale() > MAX_QUANTITY_SCALE) add(ValidationError("openingLots[$index].quantity", "Opening quantity must be greater than zero with at most four decimals."))
             if (draft.requiresLotExpiry && (lot.lotNumber.isBlank() || lot.expiryDate == null)) add(ValidationError("openingLots[$index]", "Medicine opening stock requires lot/batch and expiry."))
         }
     }
+
+    private fun validMoney(value: BigDecimal): Boolean = value.signum() >= 0 && value.scale() <= 2 && runCatching { value.movePointRight(2).longValueExact() }.isSuccess
 }

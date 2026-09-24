@@ -104,6 +104,8 @@ class AuthConverters {
     @TypeConverter fun stringToTaxClass(value: String): TaxClass = TaxClass.valueOf(value)
     @TypeConverter fun eligibilityToString(value: BenefitEligibility): String = value.name
     @TypeConverter fun stringToEligibility(value: String): BenefitEligibility = BenefitEligibility.valueOf(value)
+    @TypeConverter fun prescriptionClassToString(value: PrescriptionClass): String = value.name
+    @TypeConverter fun stringToPrescriptionClass(value: String): PrescriptionClass = PrescriptionClass.valueOf(value)
     @TypeConverter fun inventoryMovementTypeToString(value: InventoryMovementType): String = value.name
     @TypeConverter fun stringToInventoryMovementType(value: String): InventoryMovementType = InventoryMovementType.valueOf(value)
 }
@@ -137,7 +139,7 @@ interface AuthDao {
 
 @Database(
     entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, InventoryMovementEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(AuthConverters::class)
@@ -175,6 +177,11 @@ abstract class MedtryxDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_lotId ON inventory_movements(lotId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_occurredAtUtcMillis ON inventory_movements(occurredAtUtcMillis)")
                 db.execSQL("INSERT INTO inventory_movements (id, productId, lotId, type, quantity, unit, expiryDate, costCentavos, sourceReference, actorUserId, occurredAtUtcMillis, reason) SELECT 'migration-opening-' || l.id, l.productId, l.id, 'OPENING_BALANCE', l.openingQuantity, p.unit, l.expiryDate, NULL, l.supplierReference, 'MIGRATION', 0, 'F02 opening stock migrated to immutable ledger' FROM inventory_lots l JOIN products p ON p.id = l.productId WHERE l.openingQuantity <> '0'")
+            }
+        }
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE products ADD COLUMN prescriptionClass TEXT NOT NULL DEFAULT 'OTHER'")
             }
         }
     }

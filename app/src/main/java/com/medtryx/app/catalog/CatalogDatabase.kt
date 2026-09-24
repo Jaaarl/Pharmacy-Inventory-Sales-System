@@ -1,6 +1,7 @@
 package com.medtryx.app.catalog
 
 import androidx.room.Dao
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -8,9 +9,10 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Update
 
 @Entity(tableName = "products", indices = [Index(value = ["sku"], unique = true)])
-data class ProductEntity(@PrimaryKey val id: String, val sku: String, val name: String, val genericName: String?, val brand: String?, val strength: String?, val dosageForm: String?, val unit: String, val packSize: String?, val active: Boolean, val reorderLevel: String, val requiresLotExpiry: Boolean, val createdAt: Long, val updatedAt: Long)
+data class ProductEntity(@PrimaryKey val id: String, val sku: String, val name: String, val genericName: String?, val brand: String?, val strength: String?, val dosageForm: String?, val unit: String, val packSize: String?, val active: Boolean, val reorderLevel: String, val requiresLotExpiry: Boolean, @ColumnInfo(defaultValue = "'OTHER'") val prescriptionClass: PrescriptionClass = PrescriptionClass.OTHER, val createdAt: Long, val updatedAt: Long)
 @Entity(tableName = "product_barcodes", primaryKeys = ["productId", "barcode"], indices = [Index(value = ["barcode"], unique = true)], foreignKeys = [ForeignKey(ProductEntity::class, ["id"], ["productId"], onDelete = ForeignKey.CASCADE)])
 data class ProductBarcodeEntity(val productId: String, val barcode: String)
 @Entity(tableName = "product_price_versions", indices = [Index("productId")], foreignKeys = [ForeignKey(ProductEntity::class, ["id"], ["productId"], onDelete = ForeignKey.CASCADE)])
@@ -34,10 +36,12 @@ data class ImportRowResultEntity(@PrimaryKey val id: String, val manifestId: Str
  @Query("SELECT * FROM product_barcodes WHERE productId = :productId ORDER BY barcode") suspend fun barcodesForProduct(productId: String): List<ProductBarcodeEntity>
  @Query("SELECT COUNT(*) FROM products") suspend fun count(): Int
  @Query("SELECT COUNT(*) FROM product_price_versions WHERE productId = :id") suspend fun priceVersionCount(id:String): Int
+ @Query("SELECT * FROM product_price_versions WHERE productId = :id ORDER BY effectiveFrom") suspend fun priceVersions(id:String): List<ProductPriceVersionEntity>
  @Query("SELECT * FROM product_price_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestPrice(id:String): ProductPriceVersionEntity?
  @Query("SELECT * FROM tax_class_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestTax(id:String): TaxClassVersionEntity?
  @Query("SELECT * FROM benefit_rule_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestBenefit(id:String): BenefitRuleVersionEntity?
  @Insert suspend fun insertProduct(value: ProductEntity)
+ @Update suspend fun updateProduct(value: ProductEntity)
  @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertBarcodes(values: List<ProductBarcodeEntity>)
  @Insert suspend fun insertPrice(value: ProductPriceVersionEntity)
  @Insert suspend fun insertTax(value: TaxClassVersionEntity)
@@ -47,5 +51,8 @@ data class ImportRowResultEntity(@PrimaryKey val id: String, val manifestId: Str
  @Insert suspend fun insertResults(values: List<ImportRowResultEntity>)
  @Query("DELETE FROM product_barcodes WHERE productId = :productId AND barcode = :barcode") suspend fun deleteBarcode(productId: String, barcode: String): Int
  @Query("UPDATE products SET reorderLevel = :reorderLevel, updatedAt = :at WHERE id = :id") suspend fun updateReorderLevel(id: String, reorderLevel: String, at: Long): Int
+ @Query("UPDATE product_price_versions SET effectiveTo = :effectiveTo WHERE id = :id") suspend fun closePriceVersion(id: String, effectiveTo: String)
+ @Query("UPDATE tax_class_versions SET effectiveTo = :effectiveTo WHERE id = :id") suspend fun closeTaxVersion(id: String, effectiveTo: String)
+ @Query("UPDATE benefit_rule_versions SET effectiveTo = :effectiveTo WHERE id = :id") suspend fun closeBenefitVersion(id: String, effectiveTo: String)
  @Query("UPDATE products SET active = 0, updatedAt = :at WHERE id = :id") suspend fun deactivate(id: String, at: Long)
 }

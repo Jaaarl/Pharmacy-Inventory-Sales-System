@@ -12,9 +12,9 @@ This roadmap turns the delivery plan in [the master specification](Medtryx_Produ
 
 ## Current position from repository evidence
 
-The repository contains a Kotlin/Compose Android compatibility scaffold, Room databases, F01 authentication/authorization, and F02 catalog/import code. F01 and F02 verification notes report automated checks for their implemented scope. F02 also has a basic manual-entry/import-preview screen; full catalog maintenance and tablet workflow coverage remain to be completed.
+The repository contains a Kotlin/Compose Android compatibility scaffold, Room databases, F01 authentication/authorization, and F02 catalog/import code. F02 now has a connected create/edit/inactivate UI, protected and effective-dated field changes, CSV preview and reviewed-subset commit, opening-lot ledger movements, and an additive prescription-class migration. F02 implementation is **complete; automated verification is pending** because the Gradle test task has not yet run successfully in this environment. The next work is to run and resolve F02/F01 tests, then continue the ordered Phase 1 work with F03 while F06 remains a dependency for full Phase 1 completion.
 
-The source tree and notes do not show a completed physical BTKR-W09 compatibility report. Therefore Phase 0 is **in progress**, and no delivery phase should be marked complete based on the existing code alone. The next milestone is to finish and record the actual-device spike, then close the remaining F02 workflow before moving through the offline-core work packages below. This is a repository review, not a fresh test run.
+The owner reports that the physical-device compatibility checks have been run successfully, so Phase 0 is treated as **passed by owner confirmation**. The detailed device results are not recorded in this repository, so this status is based on that confirmation rather than independently reviewed device evidence. This status update is not a fresh device or automated test run.
 
 ## Phase map
 
