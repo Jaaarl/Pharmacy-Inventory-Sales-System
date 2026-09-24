@@ -1,7 +1,7 @@
 # F03 — Tax, Money, and Discount Engine
 
 **Phase:** 1 — Offline core  
-**Status:** MVP specification  
+**Status:** Engine implemented; acceptance verification pending
 **Master reference:** [Section 7](../Medtryx_Product_and_Technical_Specification.md#7-feature-f03--tax-money-and-discount-engine)
 
 ## Purpose
@@ -83,6 +83,19 @@ amountDue               = discountBase - statutoryDiscount
 - Historical calculations are reproducible from persisted snapshots.
 - No floating-point type exists in the persisted calculation path.
 - Disabled BNPC cannot be applied through UI or direct use-case/API calls.
+
+## Current Implementation Contract
+
+- `com.medtryx.app.financial.FinancialCalculationEngine` is a pure Kotlin service. The caller supplies the captured SKU inputs, an immutable financial rule set, and an explicitly approved rounding rule; the engine has no hidden mutable configuration or UI dependency.
+- `Money` stores integer centavos. Quantities use `BigDecimal` with at most four fractional digits. Intermediate VAT division is performed at 12 decimal places before the supplied line rounding mode is applied to centavo outputs.
+- Each immutable `CalculationSnapshot` captures the price, tax, and benefit effective dates; tax source; selected and qualified benefit; rule IDs and versions; rates; rounding approver/version; unrounded gross and VAT-exclusive bases; rounded line values; and applied discount authorization/authority/reason. F05 must persist this snapshot atomically with the finalized sale.
+- Tax removal occurs only when the caller explicitly selects an eligible SC/PWD benefit for that line. Promotion-only selection does not inherit statutory VAT exemption. Promotion stacking is accepted only when its captured rule explicitly allows promotion-after-statutory stacking and required authorization is supplied.
+- BNPC is disabled by default. An enabled calculation requires an approved, effective-dated policy with a covered SKU, rate, and per-SKU quantity cap; the engine applies no VAT exemption and discounts only the remaining capped quantity.
+- The engine is not yet connected to a checkout screen or a database. F04/F05 consume its snapshots; production rounding approval and target-device validation remain operational gates.
+
+## Verification Status
+
+The F03 table-driven, property, serialization, and historical-version tests in Section 20.1 are still required. Do not mark the feature verified until those tests pass and F05 demonstrates persisted historical snapshots.
 
 ## Required Tests
 

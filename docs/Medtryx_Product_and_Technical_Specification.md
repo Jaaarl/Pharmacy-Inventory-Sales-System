@@ -304,6 +304,14 @@ The 5% Basic Necessities and Prime Commodities program is distinct from the 20% 
 
 Include BNPC support in the MVP behind an administrator-only on/off switch. Keep it **off by default** until the covered SKU list, current cap, booklet handling, and rule version are configured and approved. Turning it off prevents new BNPC discounts but does not alter historical transactions.
 
+### 7.12 Calculation snapshots and domain contract
+
+The F03 implementation uses integer-centavo `Money` values at its boundary and `BigDecimal` quantities with at most four fractional digits. The caller must provide an approved rounding rule with an ID, version, mode, approver, and approval timestamp; no implicit production rounding default is selected. VAT-exclusive division uses 12 internal decimal places before line outputs are rounded to cents.
+
+Each immutable line calculation snapshot captures the SKU price and quantity, price/tax/benefit effective dates, catalog tax source and benefit classifications, selected benefit and line qualification, tax/discount rule IDs and versions, rates, unrounded gross and VAT-exclusive bases, rounded outputs, rounding approval, and applied discount authorization/authority/reason. F05 must store these snapshots atomically with finalized sale lines so later configuration changes cannot alter history.
+
+The engine applies SC/PWD VAT removal only when that benefit is selected for the specific eligible line. An alternative promotion calculation remains a normal VATable sale unless the captured rule explicitly provides otherwise. Promotion stacking is explicit and rejected unless the captured promotion permits it and any required protected-role authorization is present. BNPC remains disabled unless its approved version includes effective dates, covered SKUs, rates, and SKU quantity caps; it never inherits SC/PWD VAT exemption.
+
 ---
 
 ## 8. Feature F04 — SC/PWD Checkout
