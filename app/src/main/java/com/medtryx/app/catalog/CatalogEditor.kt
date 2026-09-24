@@ -62,7 +62,7 @@ fun CatalogEditorScreen(
         Row { Checkbox(requiresLotExpiry, { requiresLotExpiry = it }); Text("Medicine: require lot/batch and expiry") }
         CatalogField("Barcodes (separate with |)", barcodes) { barcodes = it }
         if (editingProductId == null) CatalogField("Opening lots", openingLots, minLines = 3) { openingLots = it }
-        CatalogField("Reason for audit *", reason)
+        CatalogField("Reason for audit *", reason) { reason = it }
         if (message != null) Text(message)
         if (formError != null) Text(formError!!, color = MaterialTheme.colorScheme.error)
         Button(onClick = {
