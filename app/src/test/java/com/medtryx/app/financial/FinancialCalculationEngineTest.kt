@@ -61,13 +61,13 @@ class FinancialCalculationEngineTest {
 
     @Test fun table_driven_tax_and_benefit_cases_match_exact_centavos() {
         val cases = listOf(
-            "regular VATable" to input() to Expected(10_000, 8_929, 1_071, 0, 0, due = 10_000, TaxResult.VATABLE),
-            "VAT-exempt catalog" to input(tax = TaxClass.VAT_EXEMPT) to Expected(10_000, 10_000, 0, 0, 0, due = 10_000, TaxResult.VAT_EXEMPT_CATALOG),
-            "zero-rated catalog" to input(tax = TaxClass.ZERO_RATED) to Expected(10_000, 10_000, 0, 0, 0, due = 10_000, TaxResult.ZERO_RATED),
-            "senior qualified VATable" to input(eligibility = BenefitEligibility.SC_PWD_20, benefit = CustomerBenefit.SENIOR_CITIZEN, qualified = true, selection = DiscountSelection.STATUTORY_ONLY) to Expected(10_000, 8_929, 0, 1_071, 1_786, due = 7_143, TaxResult.VAT_EXEMPT_SC),
-            "PWD qualified VATable" to input(eligibility = BenefitEligibility.SC_PWD_20, benefit = CustomerBenefit.PERSON_WITH_DISABILITY, qualified = true, selection = DiscountSelection.STATUTORY_ONLY) to Expected(10_000, 8_929, 0, 1_071, 1_786, due = 7_143, TaxResult.VAT_EXEMPT_PWD),
-            "SC on already-exempt item" to input(tax = TaxClass.VAT_EXEMPT, eligibility = BenefitEligibility.SC_PWD_20, benefit = CustomerBenefit.SENIOR_CITIZEN, qualified = true, selection = DiscountSelection.STATUTORY_ONLY) to Expected(10_000, 10_000, 0, 0, 2_000, due = 8_000, TaxResult.VAT_EXEMPT_CATALOG),
-            "quantity three" to input(price = "10.00", quantity = "3") to Expected(3_000, 2_679, 321, 0, 0, due = 3_000, TaxResult.VATABLE),
+            "regular VATable" to input() to Expected(10_000, 8_929, 1_071, 0, 0, due = 10_000, taxResult = TaxResult.VATABLE),
+            "VAT-exempt catalog" to input(tax = TaxClass.VAT_EXEMPT) to Expected(10_000, 10_000, 0, 0, 0, due = 10_000, taxResult = TaxResult.VAT_EXEMPT_CATALOG),
+            "zero-rated catalog" to input(tax = TaxClass.ZERO_RATED) to Expected(10_000, 10_000, 0, 0, 0, due = 10_000, taxResult = TaxResult.ZERO_RATED),
+            "senior qualified VATable" to input(eligibility = BenefitEligibility.SC_PWD_20, benefit = CustomerBenefit.SENIOR_CITIZEN, qualified = true, selection = DiscountSelection.STATUTORY_ONLY) to Expected(10_000, 8_929, 0, 1_071, 1_786, due = 7_143, taxResult = TaxResult.VAT_EXEMPT_SC),
+            "PWD qualified VATable" to input(eligibility = BenefitEligibility.SC_PWD_20, benefit = CustomerBenefit.PERSON_WITH_DISABILITY, qualified = true, selection = DiscountSelection.STATUTORY_ONLY) to Expected(10_000, 8_929, 0, 1_071, 1_786, due = 7_143, taxResult = TaxResult.VAT_EXEMPT_PWD),
+            "SC on already-exempt item" to input(tax = TaxClass.VAT_EXEMPT, eligibility = BenefitEligibility.SC_PWD_20, benefit = CustomerBenefit.SENIOR_CITIZEN, qualified = true, selection = DiscountSelection.STATUTORY_ONLY) to Expected(10_000, 10_000, 0, 0, 2_000, due = 8_000, taxResult = TaxResult.VAT_EXEMPT_CATALOG),
+            "quantity three" to input(price = "10.00", quantity = "3") to Expected(3_000, 2_679, 321, 0, 0, due = 3_000, taxResult = TaxResult.VATABLE),
         )
 
         cases.forEach { (labelAndInput, expected) ->
@@ -134,8 +134,8 @@ class FinancialCalculationEngineTest {
             disabled.copy(quantity = BigDecimal("2"), bnpcPolicy = policy), rules, rounding,
         )
         assertEquals(500, capped.amounts.statutoryDiscount.centavos)
-        assertEquals(9_500, capped.amounts.amountDue.centavos)
-        assertEquals(1_071, capped.amounts.regularVat.centavos)
+        assertEquals(19_500, capped.amounts.amountDue.centavos)
+        assertEquals(2_143, capped.amounts.regularVat.centavos)
         assertEquals("bnpc-v3", capped.bnpcPolicyVersion)
 
         val exhausted = FinancialCalculationEngine.calculateLine(

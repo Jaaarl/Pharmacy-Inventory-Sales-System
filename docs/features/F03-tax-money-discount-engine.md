@@ -1,7 +1,7 @@
 # F03 — Tax, Money, and Discount Engine
 
 **Phase:** 1 — Offline core  
-**Status:** Engine implemented; acceptance verification pending
+**Status:** Engine implemented and calculation tests passing; persistence verification pending
 **Master reference:** [Section 7](../Medtryx_Product_and_Technical_Specification.md#7-feature-f03--tax-money-and-discount-engine)
 
 ## Purpose
@@ -95,7 +95,7 @@ amountDue               = discountBase - statutoryDiscount
 
 ## Verification Status
 
-The F03 table-driven, property, serialization, and historical-version tests in Section 20.1 are still required. Do not mark the feature verified until those tests pass and F05 demonstrates persisted historical snapshots.
+The table-driven centavo cases, mixed-cart/order invariants, rounding boundaries, promotion comparison, BNPC cap/disabled behavior, and in-memory rule-version tests pass in `FinancialCalculationEngineTest`. The serialized/Room snapshot round-trip and stored historical-version tests remain pending F05 persistence. Do not mark the feature fully verified until those tests pass and F05 demonstrates atomic historical snapshot storage.
 
 ## Required Tests
 
