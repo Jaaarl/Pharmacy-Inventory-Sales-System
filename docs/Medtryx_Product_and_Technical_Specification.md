@@ -853,124 +853,17 @@ Medtryx is ready for pilot use only when:
 
 ## 21. Delivery Plan
 
-### Phase 0 — Compliance and device validation
+The delivery sequence, dependency map, current repository position, work-package acceptance gates, and rollout checklist are maintained in the [Medtryx MVP Delivery Roadmap](MVP_Implementation_Priorities.md). Use that roadmap together with the feature requirements and tests in Sections 20.1 and 20.2.
 
-**Feature coverage:** Technical foundations used by F01–F13.
+| Phase | Outcome | Feature coverage | Completion gate |
+| --- | --- | --- | --- |
+| 0. Device and policy gate | Prove platform feasibility on BTKR-W09 and record required setup decisions | Platform foundation for F01–F13 | Physical-device checks pass, or an approved replacement decision is recorded |
+| 1. Offline operational core | Secure offline catalog, stock, calculations, checkout, and cashier shifts | F01–F06, F08 | Feature tests, migration/rollback checks, reconciliation, and MatePad smoke test pass |
+| 2. Controls and recovery | Bundles, corrections, reporting, backups, and isolated practice | F07, F09–F12 | Reversal/report reconciliation, restore, Test Mode isolation, and Phase 1 regression pass |
+| 3. Local iPad dashboard | Secure role-scoped local access to reports and permitted requests | F13 and remote F10/F11 actions | Actual MatePad/iPad security and lifecycle checks pass |
+| 4. Pilot and production rollout | Prepare staff, data, procedures, release, and recovery | F01–F13 | Release acceptance passes and owner authorizes go-live |
 
-**Deliverables:**
-
-- Configure the store as VAT-registered and confirm calculation, rounding, and retention rules.
-- Confirm the MVP boundary for SC/PWD ID checking and keep BNPC off pending its policy configuration.
-- Build and install a minimal signed Kotlin/Compose compatibility application.
-- Prove Room/SQLite, keystore encryption, foreground service, local HTTPS socket, system file picker, and app relaunch behavior.
-- Confirm that official manual invoicing remains outside Medtryx.
-
-**Required testing:**
-
-- Install, launch, background, foreground, lock, unlock, restart, and reboot the compatibility app on the actual BTKR-W09 tablet.
-- Create, read, update, migrate, close, and reopen a test Room database.
-- Encrypt/decrypt test data with a keystore-held key before and after app restart.
-- Create and reopen an encrypted test file through the HarmonyOS file manager/system picker.
-- Start the foreground local service from a visible action and reach a health page from the actual iPad over the intended Wi-Fi network.
-- Record OS/build, battery settings, failures, workarounds, and measured resource use.
-
-**Exit gate:** All required platform capabilities work on the physical device, or an approved replacement architecture/device decision is documented before feature development continues.
-
-### Phase 1 — Offline core
-
-**Feature coverage:** F01, F02, F03, F04, F05, F06, and F08.
-
-**Deliverables:**
-
-- Authentication, roles, permissions, and audit events.
-- Product catalog, manual entry, protected CSV import, lots, expiry, and inventory ledger.
-- Exact money, VAT, SC/PWD, and disabled-by-default BNPC rule engine.
-- Regular and mixed-cart checkout with ID-only SC/PWD verification.
-- Cash/QR settlement declarations.
-- Automatic internal transaction IDs and clearly labeled internal summaries.
-- Cashier shift opening, closing, turnover, and variance calculation.
-
-**Required testing:**
-
-- Run all F01–F06 and F08 tests from Section 20.1.
-- Run table-driven tax/discount tests for every approved calculation example and rounding boundary.
-- Run Room migration tests from an empty database and the previous test schema.
-- Inject failures at each finalization step and prove no partial sale or inventory movement survives.
-- Run Compose UI tests for login, product entry/import, regular sale, SC sale, PWD sale, mixed cart, and shift close.
-- On the physical tablet, complete offline sales, force-stop/reopen the app, reboot the device, and verify records, sequences, lots, and shifts remain correct.
-
-**Exit gate:** The offline core passes its automated suite, exact-centavo reconciliation, transaction rollback tests, and physical-tablet smoke test with no open critical data-integrity defect.
-
-### Phase 2 — Controls and reporting
-
-**Feature coverage:** F07, F09, F10, F11, and F12, plus regression of Phase 1.
-
-**Deliverables:**
-
-- Virtual bundles and component-level pricing/tax/inventory behavior.
-- Returns, reversals, protected approval flows, and immutable corrections.
-- Daily/monthly reports, CSV exports, and audit reports.
-- Encrypted backup, restore preview, validation, and recovery workflow.
-- Physically isolated Test Mode.
-
-**Required testing:**
-
-- Run all F07 and F09–F12 tests from Section 20.1.
-- Reconcile reports and CSV exports to a seeded reference ledger containing regular, SC, PWD, mixed-tax, bundle, void, and return transactions.
-- Test a bundle containing VATable and VAT-exempt components and only one SC/PWD-eligible component.
-- Complete a destructive test-environment restore drill and compare the restored database to its source.
-- Prove Test Mode sales, stock, shifts, sequences, exports, and backups never affect live data.
-- Re-run the complete Phase 1 suite as regression testing.
-
-**Exit gate:** Reports reconcile to the centavo, reversals preserve immutable history, backup restoration succeeds, Test Mode isolation is proven, and no Phase 1 regression remains.
-
-### Phase 3 — Local iPad dashboard
-
-**Feature coverage:** F13 and the remote views/actions of F10 and F11.
-
-**Deliverables:**
-
-- Foreground local HTTPS service with visible status and stop control.
-- Secure short-lived pairing and authenticated, role-scoped sessions.
-- Read-only sales/report dashboard.
-- Authorized export and backup requests executed by the tablet.
-- Connection/session recovery behavior for network and lifecycle changes.
-
-**Required testing:**
-
-- Run all F13 tests from Section 20.1 on the actual MatePad and iPad.
-- Verify TLS trust, single-use pairing, expired/replayed tokens, logout, rate limits, and session revocation.
-- Attempt every write endpoint/action as a read-only user and by direct API request; all must fail.
-- Test Wi-Fi loss/rejoin, IP change, screen lock, tablet sleep, app backgrounding, service stop, and device reboot.
-- Test simultaneous tabs/clients and confirm database/report consistency during a live tablet sale.
-- Run basic security checks for unauthorized LAN access, cleartext traffic, path traversal, malformed payloads, and sensitive data in logs.
-- Re-run Phase 1 and Phase 2 financial/data regression suites.
-
-**Exit gate:** The actual iPad can securely perform only its authorized actions, lifecycle/network failures recover safely, and no dashboard request can bypass domain permissions or corrupt local data.
-
-### Phase 4 — Production compliance and rollout
-
-**Feature coverage:** F01–F13 as one release candidate.
-
-**Deliverables:**
-
-- Confirm the pharmacy's separate manual-invoice process is operational; Medtryx remains an internal tool and does not replace it.
-- Prepare production configuration, users, product catalog, opening inventory, rule versions, backup location, and operating procedures.
-- Train cashiers and protected-role users.
-- Complete user acceptance and parallel reconciliation.
-- Produce a signed release checklist, recovery instructions, and known-limitations list.
-
-**Required testing:**
-
-- Run the complete automated unit, integration, migration, UI, security, and regression suite on the release build.
-- Run scripted user acceptance with real staff and synthetic data for regular sale, SC, PWD, mixed cart, shift turnover, return, bundle, report, export, backup, restore, and iPad access.
-- Run parallel totals against independently calculated/manual reference results for an agreed trial period.
-- Perform a clean-install test, upgrade test from the prior release candidate, 8-hour operational soak test, low-storage test, and interrupted-power/restart recovery test.
-- Perform a final encrypted backup and full restore drill on a non-production copy.
-- Verify all production summaries remain labeled as internal records and no official invoice behavior has been introduced.
-- Obtain owner acceptance of unresolved limitations and the configured safe defaults.
-
-**Exit gate:** All critical/high defects are closed, financial and stock reconciliation passes, staff complete acceptance, recovery is demonstrated, and the owner authorizes go-live.
+A phase is not complete when coding stops. Its feature acceptance tests, applicable device checks, and exit gate must pass. The roadmap records the current state separately from future release criteria; the presence of a scaffold or test notes does not by itself establish phase completion.
 
 ---
 
