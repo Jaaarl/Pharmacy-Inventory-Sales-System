@@ -38,8 +38,11 @@ data class ImportRowResultEntity(@PrimaryKey val id: String, val manifestId: Str
  @Query("SELECT COUNT(*) FROM product_price_versions WHERE productId = :id") suspend fun priceVersionCount(id:String): Int
  @Query("SELECT * FROM product_price_versions WHERE productId = :id ORDER BY effectiveFrom") suspend fun priceVersions(id:String): List<ProductPriceVersionEntity>
  @Query("SELECT * FROM product_price_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestPrice(id:String): ProductPriceVersionEntity?
+ @Query("SELECT * FROM product_price_versions WHERE productId = :id AND effectiveFrom <= :date AND (effectiveTo IS NULL OR effectiveTo >= :date) ORDER BY effectiveFrom DESC LIMIT 1") suspend fun priceOnDate(id: String, date: String): ProductPriceVersionEntity?
  @Query("SELECT * FROM tax_class_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestTax(id:String): TaxClassVersionEntity?
+ @Query("SELECT * FROM tax_class_versions WHERE productId = :id AND effectiveFrom <= :date AND (effectiveTo IS NULL OR effectiveTo >= :date) ORDER BY effectiveFrom DESC LIMIT 1") suspend fun taxOnDate(id: String, date: String): TaxClassVersionEntity?
  @Query("SELECT * FROM benefit_rule_versions WHERE productId = :id ORDER BY effectiveFrom DESC LIMIT 1") suspend fun latestBenefit(id:String): BenefitRuleVersionEntity?
+ @Query("SELECT * FROM benefit_rule_versions WHERE productId = :id AND effectiveFrom <= :date AND (effectiveTo IS NULL OR effectiveTo >= :date) ORDER BY effectiveFrom DESC LIMIT 1") suspend fun benefitOnDate(id: String, date: String): BenefitRuleVersionEntity?
  @Insert suspend fun insertProduct(value: ProductEntity)
  @Update suspend fun updateProduct(value: ProductEntity)
  @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertBarcodes(values: List<ProductBarcodeEntity>)

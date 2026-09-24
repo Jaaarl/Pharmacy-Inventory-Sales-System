@@ -15,6 +15,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.medtryx.app.catalog.*
+import com.medtryx.app.sales.*
 
 @Entity(tableName = "users", indices = [Index(value = ["username"], unique = true)])
 data class UserEntity(
@@ -138,17 +139,37 @@ interface AuthDao {
 }
 
 @Database(
-    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, InventoryMovementEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class],
-    version = 5,
+    entities = [UserEntity::class, CredentialEntity::class, UserPermissionGrantEntity::class, SessionEntity::class, AuthenticationAttemptEntity::class, AuditEventEntity::class, ProductEntity::class, ProductBarcodeEntity::class, ProductPriceVersionEntity::class, TaxClassVersionEntity::class, BenefitRuleVersionEntity::class, InventoryLotEntity::class, InventoryMovementEntity::class, ImportManifestEntity::class, ImportRowResultEntity::class, SaleEntity::class, SaleLineEntity::class, SaleLineAllocationEntity::class, TransactionSequenceEntity::class, RoundingRuleApprovalEntity::class],
+    version = 6,
     exportSchema = true,
 )
-@TypeConverters(AuthConverters::class)
+@TypeConverters(AuthConverters::class, SalesConverters::class)
 abstract class MedtryxDatabase : RoomDatabase() {
     abstract fun authDao(): AuthDao
     abstract fun catalogDao(): CatalogDao
     abstract fun inventoryDao(): InventoryDao
+    abstract fun salesDao(): SalesDao
 
     companion object {
+        /** Enforce append-only finalized records on fresh and migrated databases. */
+        val IMMUTABILITY_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onCreate(db: SupportSQLiteDatabase) = installImmutabilityTriggers(db)
+            override fun onOpen(db: SupportSQLiteDatabase) = installImmutabilityTriggers(db)
+        }
+
+        private fun installImmutabilityTriggers(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS sales_no_update BEFORE UPDATE ON sales BEGIN SELECT RAISE(ABORT, 'Finalized sales are immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS sales_no_delete BEFORE DELETE ON sales BEGIN SELECT RAISE(ABORT, 'Finalized sales are immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_lines_no_update BEFORE UPDATE ON sale_lines BEGIN SELECT RAISE(ABORT, 'Finalized sale lines are immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_lines_no_delete BEFORE DELETE ON sale_lines BEGIN SELECT RAISE(ABORT, 'Finalized sale lines are immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_allocations_no_update BEFORE UPDATE ON sale_line_allocations BEGIN SELECT RAISE(ABORT, 'Finalized sale allocations are immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_allocations_no_delete BEFORE DELETE ON sale_line_allocations BEGIN SELECT RAISE(ABORT, 'Finalized sale allocations are immutable'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS inventory_movements_no_update BEFORE UPDATE ON inventory_movements BEGIN SELECT RAISE(ABORT, 'Inventory movements are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS inventory_movements_no_delete BEFORE DELETE ON inventory_movements BEGIN SELECT RAISE(ABORT, 'Inventory movements are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_update BEFORE UPDATE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_delete BEFORE DELETE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
+        }
+
         /** Additive migration: audit history remains append-only. */
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -182,6 +203,33 @@ abstract class MedtryxDatabase : RoomDatabase() {
         val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE products ADD COLUMN prescriptionClass TEXT NOT NULL DEFAULT 'OTHER'")
+            }
+        }
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS sales (id TEXT NOT NULL PRIMARY KEY, humanTransactionId TEXT NOT NULL, idempotencyKey TEXT NOT NULL, status TEXT NOT NULL, cashierUserId TEXT NOT NULL, cashierDisplayName TEXT NOT NULL, createdAtUtcMillis INTEGER NOT NULL, businessDateManila TEXT NOT NULL, customerBenefit TEXT, customerNameEncrypted TEXT, benefitIdType TEXT, benefitIdNumberEncrypted TEXT, benefitIdLastFour TEXT, physicalIdChecked INTEGER NOT NULL, settlementMethod TEXT NOT NULL, qrReference TEXT, customerShowedQrSuccess INTEGER NOT NULL, grossCentavos INTEGER NOT NULL, vatableSalesCentavos INTEGER NOT NULL, vatCentavos INTEGER NOT NULL, vatExemptSalesCentavos INTEGER NOT NULL, zeroRatedSalesCentavos INTEGER NOT NULL, vatExemptionAdjustmentCentavos INTEGER NOT NULL, statutoryDiscountCentavos INTEGER NOT NULL, promotionalDiscountCentavos INTEGER NOT NULL, amountDueCentavos INTEGER NOT NULL, lineCount INTEGER NOT NULL, FOREIGN KEY(cashierUserId) REFERENCES users(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sales_humanTransactionId ON sales(humanTransactionId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sales_idempotencyKey ON sales(idempotencyKey)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sales_createdAtUtcMillis ON sales(createdAtUtcMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sales_cashierUserId ON sales(cashierUserId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS sale_lines (id TEXT NOT NULL PRIMARY KEY, saleId TEXT NOT NULL, lineNumber INTEGER NOT NULL, productId TEXT NOT NULL, sku TEXT NOT NULL, productName TEXT NOT NULL, unit TEXT NOT NULL, quantity TEXT NOT NULL, unitPriceCentavos INTEGER NOT NULL, unitCostCentavos INTEGER, taxResult TEXT NOT NULL, grossCentavos INTEGER NOT NULL, vatableSalesCentavos INTEGER NOT NULL, vatCentavos INTEGER NOT NULL, vatExemptSalesCentavos INTEGER NOT NULL, zeroRatedSalesCentavos INTEGER NOT NULL, vatExemptionAdjustmentCentavos INTEGER NOT NULL, statutoryDiscountCentavos INTEGER NOT NULL, promotionalDiscountCentavos INTEGER NOT NULL, amountDueCentavos INTEGER NOT NULL, calculationSnapshot TEXT NOT NULL, FOREIGN KEY(saleId) REFERENCES sales(id) ON DELETE RESTRICT, FOREIGN KEY(productId) REFERENCES products(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sale_lines_saleId_lineNumber ON sale_lines(saleId, lineNumber)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sale_lines_productId ON sale_lines(productId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS sale_line_allocations (id TEXT NOT NULL PRIMARY KEY, saleLineId TEXT NOT NULL, lotId TEXT, quantity TEXT NOT NULL, inventoryMovementId TEXT NOT NULL, FOREIGN KEY(saleLineId) REFERENCES sale_lines(id) ON DELETE RESTRICT, FOREIGN KEY(lotId) REFERENCES inventory_lots(id) ON DELETE RESTRICT, FOREIGN KEY(inventoryMovementId) REFERENCES inventory_movements(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sale_line_allocations_saleLineId ON sale_line_allocations(saleLineId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_sale_line_allocations_inventoryMovementId ON sale_line_allocations(inventoryMovementId)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS transaction_sequences (businessDateManila TEXT NOT NULL PRIMARY KEY, lastSequence INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS rounding_rule_approvals (id TEXT NOT NULL PRIMARY KEY, version TEXT NOT NULL, mode TEXT NOT NULL, approvedByUserId TEXT NOT NULL, approvedAtUtcMillis INTEGER NOT NULL, reason TEXT NOT NULL, FOREIGN KEY(approvedByUserId) REFERENCES users(id) ON DELETE RESTRICT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_rounding_rule_approvals_approvedAtUtcMillis ON rounding_rule_approvals(approvedAtUtcMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_rounding_rule_approvals_approvedByUserId ON rounding_rule_approvals(approvedByUserId)")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS sales_no_update BEFORE UPDATE ON sales BEGIN SELECT RAISE(ABORT, 'Finalized sales are immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS sales_no_delete BEFORE DELETE ON sales BEGIN SELECT RAISE(ABORT, 'Finalized sales are immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_lines_no_update BEFORE UPDATE ON sale_lines BEGIN SELECT RAISE(ABORT, 'Finalized sale lines are immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_lines_no_delete BEFORE DELETE ON sale_lines BEGIN SELECT RAISE(ABORT, 'Finalized sale lines are immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_allocations_no_update BEFORE UPDATE ON sale_line_allocations BEGIN SELECT RAISE(ABORT, 'Finalized sale allocations are immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS sale_allocations_no_delete BEFORE DELETE ON sale_line_allocations BEGIN SELECT RAISE(ABORT, 'Finalized sale allocations are immutable'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_update BEFORE UPDATE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS rounding_approvals_no_delete BEFORE DELETE ON rounding_rule_approvals BEGIN SELECT RAISE(ABORT, 'Rounding approvals are append-only'); END")
             }
         }
     }

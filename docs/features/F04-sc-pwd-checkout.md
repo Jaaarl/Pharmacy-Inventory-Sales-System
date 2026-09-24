@@ -1,7 +1,7 @@
 # F04 — SC/PWD Checkout
 
 **Phase:** 1 — Offline core  
-**Status:** MVP specification  
+**Status:** Implemented; 60-test JVM suite passes. Compose UI automation and target-device gates remain open.
 **Master reference:** [Section 8](../Medtryx_Product_and_Technical_Specification.md#8-feature-f04--scpwd-checkout)
 
 ## Purpose
@@ -58,4 +58,11 @@ Apply SC or PWD treatment only to explicitly selected eligible lines while recor
 - F03 calculation engine.
 - F05 finalization and internal IDs.
 - F10 SC/PWD reports.
+
+## Implementation Notes
+
+- Checkout is connected to the F03 calculation service and F05 atomic finalizer. The cashier chooses SC or PWD, enters the required name and matching ID type/number, confirms physical inspection, and selects eligible lines individually.
+- Customer name and full ID number are encrypted with an Android Keystore AES-GCM key before persistence. Ordinary sale summaries show only the last four ID characters.
+- No ID image, prescription, booklet, birth-date, expiry, or representative information is collected.
+- The blocking confirmation uses the required `SC/PWD DISCOUNT WILL BE APPLIED. CONFIRM?` text. JVM integration tests cover SC, PWD, mixed carts, missing physical-ID confirmation, and ineligible items. Compose UI automation and physical MatePad keystore/restart checks remain delivery-gate evidence.
 

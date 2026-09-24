@@ -1,7 +1,7 @@
 # F05 — Sales, Settlement, and Internal Transaction IDs
 
 **Phase:** 1 — Offline core  
-**Status:** MVP specification  
+**Status:** Implemented; 60-test JVM suite passes. Compose UI automation and target-device gates remain open.
 **Master reference:** [Section 9](../Medtryx_Product_and_Technical_Specification.md#9-feature-f05--sales-settlement-and-internal-transaction-recording)
 
 ## Purpose
@@ -83,4 +83,13 @@ The summary may show item and tax/discount details, transaction ID, cashier, shi
 - F06 inventory movements.
 - F08 active shift rules.
 - F09 corrections.
+
+## Implementation Notes
+
+- Room schema version 6 adds sales, immutable line snapshots, lot allocations, daily transaction sequences, and protected rounding approvals through an additive 5→6 migration.
+- The checkout use case rechecks active cashier authorization inside the database transaction, calculates against effective-dated catalog versions, generates `MTX-YYYYMMDD-000001` IDs using Asia/Manila dates, and atomically writes sale, lines, F06 movements/allocations, and the finalization audit event.
+- Cash and QR are the only settlement values. QR reference and customer-shown-success are recorded as cashier declarations, with no payment verification. No invoice-number field exists; the summary uses `INTERNAL SALES RECORD — NOT AN INVOICE`.
+- Repeated confirmation with the same UUID idempotency key returns the existing sale without a second stock deduction. Database triggers protect finalized sale rows, calculation lines, allocations, rounding approvals, and inventory movements from update/delete.
+- F03 snapshots use a versioned binary/Base64 codec. Customer name and full SC/PWD ID are encrypted with AES-GCM using Android Keystore; the ordinary summary exposes only the last four ID characters.
+- Room/Robolectric tests cover rollback checkpoints, concurrent last-unit checkout, FEFO allocation, QR/CASH, sequential IDs, idempotency, cashier permission boundaries, migration, and snapshot round-trip. Physical MatePad restart/reboot and UI automation evidence remain roadmap gates.
 

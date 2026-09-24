@@ -312,6 +312,8 @@ Each immutable line calculation snapshot captures the SKU price and quantity, pr
 
 The engine applies SC/PWD VAT removal only when that benefit is selected for the specific eligible line. An alternative promotion calculation remains a normal VATable sale unless the captured rule explicitly provides otherwise. Promotion stacking is explicit and rejected unless the captured promotion permits it and any required protected-role authorization is present. BNPC remains disabled unless its approved version includes effective dates, covered SKUs, rates, and SKU quantity caps; it never inherits SC/PWD VAT exemption.
 
+F05 now persists the complete calculation snapshot with each sale line using a versioned codec, in the same Room transaction as the sale and inventory movements. Changes to current catalog or financial configuration therefore do not recalculate saved history.
+
 ---
 
 ## 8. Feature F04 — SC/PWD Checkout
@@ -345,6 +347,8 @@ The engine applies SC/PWD VAT removal only when that benefit is selected for the
 12. Finalize atomically: save the sale, sale lines, inventory movements, audit event, internal transaction ID, and settlement declaration together.
 
 The MVP verifies the physical ID and stores the customer's name, ID type, and ID number because official record requirements refer to both name and ID number. It does not store an ID image. Prescription, purchase-booklet, ID-expiry, or representative fields are disabled unless the pharmacy later confirms that they are operationally required. PWD medicine purchases can have additional documentation requirements; review the DOH's [AO 2017-0008 guidance](https://ncda.gov.ph/disability-laws/administrative-orders/doh-ao-2017-0008-implementing-guidelines-of-republic-act-10754-otherwise-known-as-an-act-expanding-the-benefits-and-privileges-of-persons-with-disability-for/) before production use.
+
+**Implementation status (2026-09-24):** Checkout now captures SC/PWD evidence, requires explicit eligible-line selection and confirmation, and encrypts the customer name and full ID with an Android Keystore AES-GCM key. JVM tests cover SC, PWD, mixed-cart, evidence validation, and redacted summaries. Compose UI and physical-device keystore/restart checks remain verification gates.
 
 ---
 
@@ -380,6 +384,8 @@ For QR, support an optional external reference and a cashier confirmation such a
 5. Medtryx finalizes the sale and inventory movements in one database transaction.
 
 The checkout screen must not show an invoice-number input. Medtryx does not validate, reserve, reconcile, or report manual invoice numbers in the MVP.
+
+**Implementation status (2026-09-24):** Schema version 6 and additive migration 5→6 persist immutable sale headers, line snapshots, settlement declarations, transaction sequences, and lot allocations. The F05 use case writes sales, F06 ledger deductions, and finalization audit evidence atomically; CASH/QR declarations are supported and QR remains unverified. Automated rollback, idempotency, sequence, last-unit concurrency, FEFO, migration, and snapshot round-trip checks are in place. Physical MatePad restart/reboot and checkout UI verification remain phase gates.
 
 ### 9.4 Internal transaction numbering
 

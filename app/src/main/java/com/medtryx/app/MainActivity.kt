@@ -41,8 +41,12 @@ import com.medtryx.app.auth.ProtectedActionAuthorizer
 import com.medtryx.app.auth.Permission
 import com.medtryx.app.auth.PermissionPolicy
 import com.medtryx.app.catalog.*
+import com.medtryx.app.financial.RoundingRule
+import com.medtryx.app.sales.*
+import com.medtryx.app.security.AndroidKeystoreSensitiveDataProtector
 import java.io.ByteArrayOutputStream
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
@@ -53,6 +57,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var catalogService: CatalogService
     private lateinit var catalogImporter: CsvCatalogImporter
     private lateinit var inventoryService: InventoryService
+    private lateinit var saleFinalizationService: SaleFinalizationService
     private var catalogImportPreview by mutableStateOf<CatalogImportPreview?>(null)
     private var catalogImportCsv by mutableStateOf<String?>(null)
     private var catalogProducts by mutableStateOf<List<CatalogProductSnapshot>>(emptyList())
@@ -60,6 +65,11 @@ class MainActivity : ComponentActivity() {
     private var inventoryAlerts by mutableStateOf<List<InventoryAlert>>(emptyList())
     private var nearExpiryDays by mutableStateOf("")
     private var showInventory by mutableStateOf(false)
+    private var showCheckout by mutableStateOf(false)
+    private var showRoundingApproval by mutableStateOf(false)
+    private var roundingRule by mutableStateOf<RoundingRule?>(null)
+    private var checkoutPreview by mutableStateOf<CheckoutPreview?>(null)
+    private var saleSummary by mutableStateOf<SaleSummary?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,7 +82,8 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             MedtryxDatabase::class.java,
             "medtryx.db",
-        ).addMigrations(MedtryxDatabase.MIGRATION_1_2, MedtryxDatabase.MIGRATION_2_3, MedtryxDatabase.MIGRATION_3_4, MedtryxDatabase.MIGRATION_4_5).build()
+        ).addMigrations(MedtryxDatabase.MIGRATION_1_2, MedtryxDatabase.MIGRATION_2_3, MedtryxDatabase.MIGRATION_3_4, MedtryxDatabase.MIGRATION_4_5, MedtryxDatabase.MIGRATION_5_6)
+            .addCallback(MedtryxDatabase.IMMUTABILITY_CALLBACK).build()
         val preferences = getSharedPreferences("medtryx_device", MODE_PRIVATE)
         val deviceId = preferences.getString("id", null) ?: java.util.UUID.randomUUID().toString().also {
             preferences.edit().putString("id", it).apply()
@@ -81,6 +92,7 @@ class MainActivity : ComponentActivity() {
         catalogService = CatalogService(authDatabase, ProtectedActionAuthorizer(authenticationService), authenticationService)
         catalogImporter = CsvCatalogImporter(authDatabase, catalogService, ProtectedActionAuthorizer(authenticationService))
         inventoryService = InventoryService(authDatabase, ProtectedActionAuthorizer(authenticationService))
+        saleFinalizationService = SaleFinalizationService(authDatabase, authenticationService, ProtectedActionAuthorizer(authenticationService), inventoryService, AndroidKeystoreSensitiveDataProtector())
 
         lifecycleScope.launch {
             launchCount = withContext(Dispatchers.IO) {
@@ -126,6 +138,19 @@ class MainActivity : ComponentActivity() {
                         onAdjustStock = ::adjustStock,
                         onDisposeExpired = ::disposeExpiredStock,
                         onCloseInventory = { showInventory = false },
+                        showCheckout = showCheckout,
+                        checkoutPreview = checkoutPreview,
+                        saleSummary = saleSummary,
+                        roundingRule = roundingRule,
+                        showRoundingApproval = showRoundingApproval,
+                        onOpenCheckout = ::openCheckout,
+                        onPreviewCheckout = ::previewCheckout,
+                        onFinalizeCheckout = ::finalizeCheckout,
+                        onCloseCheckout = { showCheckout = false; saleSummary = null; checkoutPreview = null },
+                        onNewSale = { saleSummary = null; checkoutPreview = null; authMessage = null },
+                        onOpenRoundingApproval = ::openRoundingApproval,
+                        onApproveRoundingRule = ::approveRoundingRule,
+                        onCloseRoundingApproval = { showRoundingApproval = false },
                     )
                 }
             }
@@ -231,15 +256,84 @@ class MainActivity : ComponentActivity() {
             .onSuccess { authMessage = "Expired stock disposal recorded."; (authState as? AuthState.SignedIn)?.let { refreshInventory(it.session) } }
             .onFailure { authMessage = it.message ?: "Expired stock disposal was not recorded." }
     }
+
+    private fun openCheckout(session: AuthenticatedSession) = lifecycleScope.launch {
+        authMessage = null; checkoutPreview = null; saleSummary = null
+        runCatching { withContext(Dispatchers.IO) { catalogService.productSnapshots() to saleFinalizationService.currentRoundingRule() } }
+            .onSuccess { (products, rounding) -> catalogProducts = products; roundingRule = rounding; showInventory = false; showRoundingApproval = false; showCheckout = true }
+            .onFailure { authMessage = it.message ?: "Unable to open checkout." }
+    }
+
+    private fun previewCheckout(session: AuthenticatedSession, draft: CheckoutDraft) = lifecycleScope.launch {
+        checkoutPreview = null; authMessage = null
+        runCatching { withContext(Dispatchers.IO) { saleFinalizationService.preview(session.sessionId, draft) } }
+            .onSuccess { checkoutPreview = it }
+            .onFailure { authMessage = it.message ?: "Unable to calculate this sale." }
+    }
+
+    private fun finalizeCheckout(session: AuthenticatedSession, draft: CheckoutDraft) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { saleFinalizationService.finalize(session.sessionId, draft) } }
+            .onSuccess { saleSummary = it; checkoutPreview = null }
+            .onFailure { authMessage = it.message ?: "Sale was not finalized." }
+    }
+
+    private fun openRoundingApproval(session: AuthenticatedSession) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { saleFinalizationService.currentRoundingRule() } }
+            .onSuccess { roundingRule = it; showInventory = false; showCheckout = false; showRoundingApproval = true }
+            .onFailure { authMessage = it.message ?: "Unable to load the rounding rule." }
+    }
+
+    private fun approveRoundingRule(session: AuthenticatedSession, mode: RoundingMode, reason: String) = lifecycleScope.launch {
+        authMessage = null
+        runCatching { withContext(Dispatchers.IO) { saleFinalizationService.approveRoundingRule(session.sessionId, mode, reason) } }
+            .onSuccess { roundingRule = it; authMessage = "Store rounding rule approved: ${it.mode} v${it.version}."; showRoundingApproval = false }
+            .onFailure { authMessage = it.message ?: "Rounding rule was not approved." }
+    }
 }
 
 @Composable
-private fun MedtryxApp(authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit, showInventory: Boolean, inventoryProducts: List<InventoryProductStatus>, inventoryAlerts: List<InventoryAlert>, nearExpiryDays: String, onNearExpiryDaysChange: (String) -> Unit, onOpenInventory: (AuthenticatedSession) -> Unit, onRefreshInventory: (AuthenticatedSession) -> Unit, onReceiveStock: (String,StockReceiptDraft,String)->Unit, onAdjustStock: (String,String,String?,BigDecimal,String)->Unit, onDisposeExpired: (String,String,BigDecimal,String)->Unit, onCloseInventory: ()->Unit) {
+private fun MedtryxApp(
+    authState: AuthState, message: String?, onCreateOwner: (String, String, String) -> Unit, onLogin: (String, String) -> Unit,
+    onLogout: () -> Unit, onLock: () -> Unit,
+    onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit,
+    products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit,
+    importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit,
+    onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit,
+    showInventory: Boolean, inventoryProducts: List<InventoryProductStatus>, inventoryAlerts: List<InventoryAlert>,
+    nearExpiryDays: String, onNearExpiryDaysChange: (String) -> Unit, onOpenInventory: (AuthenticatedSession) -> Unit,
+    onRefreshInventory: (AuthenticatedSession) -> Unit, onReceiveStock: (String,StockReceiptDraft,String)->Unit,
+    onAdjustStock: (String,String,String?,BigDecimal,String)->Unit, onDisposeExpired: (String,String,BigDecimal,String)->Unit,
+    onCloseInventory: ()->Unit, showCheckout: Boolean, checkoutPreview: CheckoutPreview?, saleSummary: SaleSummary?,
+    roundingRule: RoundingRule?, showRoundingApproval: Boolean, onOpenCheckout: (AuthenticatedSession) -> Unit,
+    onPreviewCheckout: (AuthenticatedSession, CheckoutDraft) -> Unit, onFinalizeCheckout: (AuthenticatedSession, CheckoutDraft) -> Unit,
+    onCloseCheckout: () -> Unit, onNewSale: () -> Unit, onOpenRoundingApproval: (AuthenticatedSession) -> Unit,
+    onApproveRoundingRule: (AuthenticatedSession, RoundingMode, String) -> Unit, onCloseRoundingApproval: () -> Unit,
+) {
     when (authState) {
         AuthState.Loading -> LoadingScreen()
         AuthState.OwnerSetup -> OwnerSetupScreen(message, onCreateOwner)
         AuthState.SignIn -> LoginScreen(message, onLogin)
-        is AuthState.SignedIn -> if (showInventory) InventoryScreen(authState.session, inventoryProducts, inventoryAlerts, message, nearExpiryDays, onNearExpiryDaysChange, { onRefreshInventory(authState.session) }, onReceiveStock, onAdjustStock, onDisposeExpired, onCloseInventory) else SignedInScreen(authState.session, message, onLogout, onLock, onSaveProduct, products, onDeactivateProduct, importPreview, importCsv, onChooseCsv, onCommitImport, onOpenInventory)
+        is AuthState.SignedIn -> when {
+            showInventory -> InventoryScreen(authState.session, inventoryProducts, inventoryAlerts, message, nearExpiryDays, onNearExpiryDaysChange, { onRefreshInventory(authState.session) }, onReceiveStock, onAdjustStock, onDisposeExpired, onCloseInventory)
+            showCheckout -> CheckoutScreen(
+                session = authState.session, products = products,
+                roundingDescription = roundingRule?.let { "${it.mode} v${it.version} · approved ${it.approvedBy}" },
+                preview = checkoutPreview, message = message, saleSummary = saleSummary,
+                onPreview = { onPreviewCheckout(authState.session, it) }, onFinalize = { onFinalizeCheckout(authState.session, it) },
+                onClose = onCloseCheckout, onNewSale = onNewSale,
+            )
+            showRoundingApproval -> RoundingApprovalScreen(
+                currentRule = roundingRule?.let { "${it.mode} v${it.version}" }, message = message,
+                onApprove = { mode, reason -> onApproveRoundingRule(authState.session, mode, reason) }, onClose = onCloseRoundingApproval,
+            )
+            else -> SignedInScreen(
+                authState.session, message, onLogout, onLock, onSaveProduct, products, onDeactivateProduct,
+                importPreview, importCsv, onChooseCsv, onCommitImport, onOpenInventory,
+                onOpenCheckout, roundingRule, onOpenRoundingApproval,
+            )
+        }
     }
 }
 
@@ -288,13 +382,17 @@ private fun AuthForm(title: String, message: String?, fields: List<Pair<String, 
 }
 
 @Composable
-private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit, onOpenInventory: (AuthenticatedSession)->Unit) {
+private fun SignedInScreen(session: AuthenticatedSession, message:String?, onLogout: () -> Unit, onLock: () -> Unit, onSaveProduct:(AuthenticatedSession,String?,CatalogProductSnapshot?,ProductDraft,LocalDate,String,()->Unit)->Unit, products: List<CatalogProductSnapshot>, onDeactivateProduct:(AuthenticatedSession,String,String)->Unit, importPreview: CatalogImportPreview?, importCsv: String?, onChooseCsv:(AuthenticatedSession,Uri)->Unit, onCommitImport: (AuthenticatedSession, String, CatalogImportPreview, String, Set<Int>?) -> Unit, onOpenInventory: (AuthenticatedSession)->Unit, onOpenCheckout: (AuthenticatedSession)->Unit, roundingRule: RoundingRule?, onOpenRoundingApproval: (AuthenticatedSession)->Unit) {
     var showCatalog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     if(showCatalog) { CatalogEditorScreen(session, products, message, importPreview, importCsv, { id, expected, draft, effectiveFrom, reason, onSuccess -> onSaveProduct(session, id, expected, draft, effectiveFrom, reason, onSuccess) }, { id, reason -> onDeactivateProduct(session, id, reason) }, { uri -> onChooseCsv(session, uri) }, { csv, preview, reason, rows -> onCommitImport(session, csv, preview, reason, rows) }, { showCatalog = false }); return }
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Signed in")
         Text("Role: ${session.profile.role}")
         Text("F01 authentication foundation is active.")
+        if (PermissionPolicy.allows(session.profile, Permission.CHECKOUT_CREATE)) Button(onClick = { onOpenCheckout(session) }) { Text("Checkout") }
+        if (PermissionPolicy.allows(session.profile, Permission.ROUNDING_CONFIGURATION_CHANGE)) {
+            Button(onClick = { onOpenRoundingApproval(session) }) { Text(if (roundingRule == null) "Approve store rounding rule" else "Store rounding rule: ${roundingRule.mode} v${roundingRule.version}") }
+        }
         val catalogPermissions = listOf(Permission.PRODUCT_MANAGE, Permission.PRICE_CHANGE, Permission.TAX_CONFIGURATION_CHANGE, Permission.BENEFIT_ELIGIBILITY_CHANGE)
         if (catalogPermissions.any { PermissionPolicy.allows(session.profile, it) }) Button(onClick={showCatalog=true}) { Text("Product catalog") }
         if (PermissionPolicy.allows(session.profile, Permission.INVENTORY_ADJUST) || PermissionPolicy.allows(session.profile, Permission.REPORTS_VIEW)) Button(onClick={onOpenInventory(session)}) { Text("Inventory") }

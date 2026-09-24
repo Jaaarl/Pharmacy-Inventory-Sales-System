@@ -1,7 +1,7 @@
 # F03 — Tax, Money, and Discount Engine
 
 **Phase:** 1 — Offline core  
-**Status:** Engine implemented and calculation tests passing; persistence verification pending
+**Status:** Engine and F05 snapshot persistence implemented; 60-test JVM suite passes; target-device validation remains open
 **Master reference:** [Section 7](../Medtryx_Product_and_Technical_Specification.md#7-feature-f03--tax-money-and-discount-engine)
 
 ## Purpose
@@ -91,11 +91,11 @@ amountDue               = discountBase - statutoryDiscount
 - Each immutable `CalculationSnapshot` captures the price, tax, and benefit effective dates; tax source; selected and qualified benefit; rule IDs and versions; rates; rounding approver/version; unrounded gross and VAT-exclusive bases; rounded line values; and applied discount authorization/authority/reason. F05 must persist this snapshot atomically with the finalized sale.
 - Tax removal occurs only when the caller explicitly selects an eligible SC/PWD benefit for that line. Promotion-only selection does not inherit statutory VAT exemption. Promotion stacking is accepted only when its captured rule explicitly allows promotion-after-statutory stacking and required authorization is supplied.
 - BNPC is disabled by default. An enabled calculation requires an approved, effective-dated policy with a covered SKU, rate, and per-SKU quantity cap; the engine applies no VAT exemption and discounts only the remaining capped quantity.
-- The engine is not yet connected to a checkout screen or a database. F04/F05 consume its snapshots; production rounding approval and target-device validation remain operational gates.
+- The engine is called by the F04/F05 checkout use case. F05 persists each complete snapshot atomically with its finalized sale line using a versioned codec; production rounding approval and target-device validation remain operational gates.
 
 ## Verification Status
 
-The table-driven centavo cases, mixed-cart/order invariants, rounding boundaries, promotion comparison, BNPC cap/disabled behavior, and in-memory rule-version tests pass in `FinancialCalculationEngineTest`. The serialized/Room snapshot round-trip and stored historical-version tests remain pending F05 persistence. Do not mark the feature fully verified until those tests pass and F05 demonstrates atomic historical snapshot storage.
+The table-driven centavo cases, mixed-cart/order invariants, rounding boundaries, promotion comparison, BNPC cap/disabled behavior, and in-memory rule-version tests pass in `FinancialCalculationEngineTest`. `CalculationSnapshotCodecTest` checks complete snapshot serialization, and `SaleFinalizationServiceTest` exercises persisted-snapshot decoding during idempotent replay and verifies rollback at each finalization checkpoint. Physical-device validation remains an open phase gate.
 
 ## Required Tests
 

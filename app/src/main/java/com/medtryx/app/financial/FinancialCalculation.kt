@@ -143,6 +143,7 @@ data class LineCalculationInput(
     val benefitEligibility: BenefitEligibility,
     val benefitEffectiveFrom: LocalDate,
     val benefitEffectiveTo: LocalDate?,
+    val calculationDate: LocalDate,
     val selectedBenefit: CustomerBenefit? = null,
     val qualifiedForSelectedBenefit: Boolean = false,
     val promotion: PromotionRuleSnapshot? = null,
@@ -150,7 +151,6 @@ data class LineCalculationInput(
     val bnpcPolicy: BnpcPolicySnapshot = BnpcPolicySnapshot.DISABLED,
     val bnpcQuantityAlreadyDiscounted: BigDecimal = BigDecimal.ZERO,
     val selection: DiscountSelection = DiscountSelection.NONE,
-    val calculationDate: LocalDate,
 ) {
     init {
         require(sku.isNotBlank())
@@ -193,6 +193,7 @@ data class CalculationSnapshot(
     val benefitEligibility: BenefitEligibility,
     val benefitEffectiveFrom: LocalDate,
     val benefitEffectiveTo: LocalDate?,
+    val calculationDate: LocalDate,
     val selectedBenefit: CustomerBenefit?,
     val qualifiedForSelectedBenefit: Boolean,
     val taxResult: TaxResult,
@@ -339,6 +340,7 @@ object FinancialCalculationEngine {
             benefitEligibility = input.benefitEligibility,
             benefitEffectiveFrom = input.benefitEffectiveFrom,
             benefitEffectiveTo = input.benefitEffectiveTo,
+            calculationDate = input.calculationDate,
             selectedBenefit = input.selectedBenefit,
             qualifiedForSelectedBenefit = qualifies,
             taxResult = taxResult,
